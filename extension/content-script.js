@@ -46,6 +46,16 @@ window.addEventListener('message', (event) => {
         })
     } catch { /* extension context invalidated */ }
   }
+
+  if (event.data.type === 'REALPOST_FORCE_POLL') {
+    try {
+      chrome.runtime?.sendMessage?.({ type: 'REALPOST_FORCE_POLL' })
+        ?.then((response) => {
+          if (response) window.postMessage({ type: 'REALPOST_FORCE_POLL_ACK', ...response }, '*')
+        })
+        ?.catch(() => {})
+    } catch { /* extension context invalidated */ }
+  }
 })
 
 // 3. Thông báo ngay cho Web App khi Content Script vừa được load vào trang

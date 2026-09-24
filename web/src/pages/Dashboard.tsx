@@ -11,14 +11,26 @@ import {
   XCircle,
   Layers,
   X,
+  Zap,
+  Globe,
+  Building2,
+  Edit3,
+  ExternalLink,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useScheduleStats, useChartData, useSchedules, useRetrySchedule } from '@/hooks/useSchedules'
-import { getStatusLabel, truncate } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import {
+  useScheduleStats,
+  useChartData,
+  useSchedules,
+  useRetrySchedule,
+  usePostNowSchedule,
+} from '@/hooks/useSchedules'
+import { getStatusLabel, truncate, getStatusColor, cn } from '@/lib/utils'
+import { ScheduleDetailModal } from '@/components/schedule/ScheduleDetailModal'
+import { toast } from 'sonner'
 
 const GOLDEN_HOUR_LABELS = ['07:00 - 08:00', '11:00 - 12:00', '16:00 - 17:00', '20:00 - 21:00']
 const GOLDEN_START = [7, 11, 16, 20]
@@ -26,11 +38,13 @@ const GOLDEN_START = [7, 11, 16, 20]
 export function Dashboard() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }))
   const [selectedSlot, setSelectedSlot] = useState<{ day: Date; hourLabel: string; items: any[] } | null>(null)
+  const [viewingSchedule, setViewingSchedule] = useState<any | null>(null)
 
   const { data: stats } = useScheduleStats()
   const { data: chartData } = useChartData()
   const { data: schedules } = useSchedules(weekStart)
   const retryMutation = useRetrySchedule()
+  const postNowMutation = usePostNowSchedule()
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
@@ -45,13 +59,21 @@ export function Dashboard() {
   }
 
   const statusBadgeVariant = (status: string) => {
-    const map: Record<string, string> = {
-      pending: 'warning',
-      posting: 'info',
-      success: 'success',
-      failed: 'destructive',
+    return (getStatusColor(status) ?? 'secondary') as any
+  }
+
+  // Quick post now from card
+  const handleQuickPostNow = async (e: React.MouseEvent, scheduleId: string) => {
+    e.stopPropagation()
+    if (!confirm('Bạn có muốn kích hoạt ĐĂNG NGAY bài viết này lên nhóm Facebook không?')) {
+      return
     }
-    return (map[status] ?? 'secondary') as any
+    try {
+      await postNowMutation.mutateAsync(scheduleId)
+      toast.success('⚡ Đã kích hoạt lệnh ĐĂNG NGAY! Extension sẽ đăng bài trong giây lát.')
+    } catch (err: any) {
+      toast.error(`Lỗi: ${err?.message || 'Không thể đăng ngay'}`)
+    }
   }
 
   const METRIC_CARDS = [
@@ -138,7 +160,7 @@ export function Dashboard() {
             <div>
               <CardTitle className="text-base">Lịch đăng bài theo khung giờ vàng</CardTitle>
               <p className="text-xs text-slate-500 mt-0.5">
-                Mỗi ô đại diện cho 1 khung giờ. Hỗ trợ hiển thị và đăng cùng lúc nhiều căn trên nhiều nhóm.
+                Nhấn vào từng ô bài viết để <strong>xem chi tiết, chỉnh sửa câu chữ</strong> hoặc bấm <strong>Đăng ngay</strong>.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -195,40 +217,71 @@ export function Dashboard() {
                     const displayItems = hasMany ? cells.slice(0, 2) : cells
 
                     return (
-                      <td key={day.toISOString()} className="p-1.5 align-top border-r last:border-0 min-w-[130px]">
+                      <td key={day.toISOString()} className="p-1.5 align-top border-r last:border-0 min-w-[135px]">
                         {cells.length === 0 ? (
-                          <div className="h-14 border border-dashed border-slate-100 rounded flex items-center justify-center text-[11px] text-slate-300">
+                          <div className="h-16 border border-dashed border-slate-100 rounded-lg flex items-center justify-center text-[11px] text-slate-300">
                             Trống
                           </div>
                         ) : (
-                          <div className="space-y-1">
+                          <div className="space-y-1.5">
                             {displayItems.map((s: any) => (
                               <div
                                 key={s.id}
-                                className="rounded p-1.5 bg-slate-50 border border-slate-200 text-xs hover:bg-slate-100 transition-colors shadow-2xs"
+                                onClick={() => setViewingSchedule(s)}
+                                className="group relative rounded-lg p-2 bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/30 hover:shadow-sm cursor-pointer transition-all space-y-1"
+                                title="Nhấn để xem chi tiết, chỉnh sửa hoặc đăng ngay"
                               >
-                                {s.properties && (
-                                  <p className="font-medium text-slate-800 truncate" title={(s.properties as any).title}>
-                                    {truncate((s.properties as any).title ?? '', 18)}
+                                {/* Property Title */}
+                                <div className="flex items-center justify-between gap-1">
+                                  <p
+                                    className="font-semibold text-slate-800 text-xs truncate group-hover:text-emerald-700 transition-colors flex items-center gap-1"
+                                    title={s.properties?.title || 'BĐS'}
+                                  >
+                                    <Building2 className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                                    <span className="truncate">{s.properties?.title || 'BĐS'}</span>
                                   </p>
-                                )}
-                                <div className="text-[10px] text-slate-400 truncate font-mono">
-                                  {s.target_group_url ? s.target_group_url.replace('https://www.facebook.com/groups/', 'fb/') : ''}
                                 </div>
-                                <div className="flex items-center justify-between mt-1 gap-1">
-                                  <Badge variant={statusBadgeVariant(s.status)} className="text-[10px] py-0 px-1.5">
+
+                                {/* Facebook Group info */}
+                                <div className="text-[10px] text-slate-500 truncate font-mono flex items-center gap-1">
+                                  <Globe className="w-2.5 h-2.5 text-blue-500 flex-shrink-0" />
+                                  <span className="truncate">
+                                    {s.target_group_url ? s.target_group_url.replace('https://www.facebook.com/groups/', 'fb/') : 'Facebook Group'}
+                                  </span>
+                                </div>
+
+                                {/* Status badge and quick actions */}
+                                <div className="flex items-center justify-between mt-1 pt-0.5 gap-1 border-t border-slate-100">
+                                  <Badge variant={statusBadgeVariant(s.status)} className="text-[9px] py-0 px-1">
                                     {getStatusLabel(s.status)}
                                   </Badge>
-                                  {s.status === 'failed' && (
+
+                                  <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                                    {/* Quick Post Now */}
                                     <button
                                       type="button"
-                                      onClick={() => retryMutation.mutate(s.id)}
-                                      title="Thử lại"
-                                      className="text-slate-400 hover:text-emerald-500 cursor-pointer"
+                                      onClick={(e) => handleQuickPostNow(e, s.id)}
+                                      title="Kích hoạt đăng ngay bài này"
+                                      className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100/70 p-0.5 rounded transition-colors cursor-pointer"
                                     >
-                                      <RotateCcw className="w-3 h-3" />
+                                      <Zap className="w-3 h-3 fill-current" />
                                     </button>
-                                  )}
+
+                                    {/* Retry on failed */}
+                                    {s.status === 'failed' && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          retryMutation.mutate(s.id)
+                                        }}
+                                        title="Thử lại"
+                                        className="text-red-500 hover:text-red-700 p-0.5 rounded transition-colors cursor-pointer"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -247,7 +300,7 @@ export function Dashboard() {
                                 className="w-full mt-1 py-1 px-1.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-semibold transition-colors flex items-center justify-center gap-1 cursor-pointer"
                               >
                                 <Layers className="w-3 h-3" />
-                                +{cells.length - 2} bài khác ({cells.length} bài)
+                                +{cells.length - 2} bài khác (Tổng {cells.length} bài)
                               </button>
                             )}
                           </div>
@@ -262,10 +315,10 @@ export function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* ===== MODAL: CHI TIẾT TẤT CẢ BÀI ĐĂNG TRONG 1 KHUNG GIỜ (VÍ DỤ 12 BÀI) ===== */}
+      {/* ===== MODAL: DANH SÁCH BÀI TRONG 1 KHUNG GIỜ KHI CÓ NHIỀU BÀI ===== */}
       {selectedSlot && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-2xs">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
             <div className="flex items-center justify-between p-5 border-b bg-slate-50">
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -279,7 +332,7 @@ export function Dashboard() {
               <button
                 type="button"
                 onClick={() => setSelectedSlot(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200/50 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200/50 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -289,14 +342,15 @@ export function Dashboard() {
               {selectedSlot.items.map((s: any, idx: number) => (
                 <div
                   key={s.id}
-                  className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition-colors space-y-2"
+                  onClick={() => setViewingSchedule(s)}
+                  className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-emerald-500 hover:bg-emerald-50/20 hover:shadow-xs transition-all space-y-2 cursor-pointer group"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-xs flex items-center justify-center font-bold flex-shrink-0">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 group-hover:bg-emerald-100 text-slate-700 group-hover:text-emerald-700 text-xs flex items-center justify-center font-bold flex-shrink-0 transition-colors">
                         {idx + 1}
                       </span>
-                      <span className="text-xs font-semibold text-slate-900 truncate">
+                      <span className="text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition-colors truncate">
                         {s.properties?.title || 'Bất động sản'}
                       </span>
                     </div>
@@ -304,22 +358,32 @@ export function Dashboard() {
                       <Badge variant={statusBadgeVariant(s.status)} className="text-xs py-0.5">
                         {getStatusLabel(s.status)}
                       </Badge>
-                      {s.status === 'failed' && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          onClick={() => retryMutation.mutate(s.id)}
-                        >
-                          <RotateCcw className="w-3 h-3 mr-1" /> Thử lại
-                        </Button>
-                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200"
+                        onClick={(e) => handleQuickPostNow(e, s.id)}
+                      >
+                        <Zap className="w-3 h-3 mr-1 fill-current" /> Đăng ngay
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-slate-600 hover:text-slate-900"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setViewingSchedule(s)
+                        }}
+                      >
+                        <Edit3 className="w-3 h-3 mr-1" /> Chi tiết
+                      </Button>
                     </div>
                   </div>
 
-                  <div className="text-xs text-slate-600 flex items-center gap-1.5 font-mono bg-white p-2 rounded-lg border border-slate-200/70">
+                  <div className="text-xs text-slate-600 flex items-center gap-1.5 font-mono bg-slate-50 p-2 rounded-lg border border-slate-200/70">
+                    <Globe className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
                     <span className="text-slate-400 font-sans">Nhóm:</span>
-                    <span className="truncate max-w-[420px] text-blue-600 font-medium">
+                    <span className="truncate max-w-[400px] text-blue-600 font-medium">
                       {s.target_group_url}
                     </span>
                   </div>
@@ -335,7 +399,7 @@ export function Dashboard() {
 
             <div className="p-4 border-t bg-slate-50 flex justify-between items-center">
               <span className="text-xs text-slate-500">
-                Extension sẽ lấy các bài này ra đăng tuần tự với khoảng cách trễ 30-90 giây/bài.
+                Nhấn vào bất kỳ bài nào để chỉnh sửa câu chữ hoặc xem ảnh đính kèm.
               </span>
               <Button variant="outline" size="sm" onClick={() => setSelectedSlot(null)}>
                 Đóng
@@ -343,6 +407,14 @@ export function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ===== MODAL: CHI TIẾT & CHỈNH SỬA TỪNG BÀI ĐĂNG (KÈM NÚT ĐĂNG NGAY) ===== */}
+      {viewingSchedule && (
+        <ScheduleDetailModal
+          schedule={viewingSchedule}
+          onClose={() => setViewingSchedule(null)}
+        />
       )}
     </div>
   )

@@ -246,6 +246,14 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     sendResponse({ type: 'REALPOST_PONG', token: chrome.runtime.id })
     return true
   }
+  if (message.type === 'REALPOST_FORCE_POLL') {
+    pollAndPost().then(() => {
+      sendResponse({ success: true })
+    }).catch((err) => {
+      sendResponse({ success: false, error: err.message })
+    })
+    return true
+  }
 })
 
 // Also listen for content script messages (for localhost dev and web app)
@@ -263,6 +271,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }).then(() => {
       console.log('[RealPost] Config updated via content script')
       sendResponse({ success: true, extensionId: chrome.runtime.id })
+    }).catch((err) => {
+      sendResponse({ success: false, error: err.message })
+    })
+    return true
+  }
+  if (message.type === 'REALPOST_FORCE_POLL') {
+    console.log('[RealPost] Force poll requested via content script')
+    pollAndPost().then(() => {
+      sendResponse({ success: true })
     }).catch((err) => {
       sendResponse({ success: false, error: err.message })
     })

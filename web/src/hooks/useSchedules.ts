@@ -11,7 +11,7 @@ export function useSchedules(weekStart?: Date) {
     queryKey: ['schedules', start.toISOString()],
     queryFn: async () => {
       const { data, error } = await (supabase.from('schedules') as any)
-        .select('*, generated_posts(title, content, style, selected_images), properties(title, images)')
+        .select('*, generated_posts(id, title, content, style, variant_index, selected_images), properties(id, title, images, raw_description)')
         .gte('scheduled_at', start.toISOString())
         .lte('scheduled_at', end.toISOString())
         .order('scheduled_at', { ascending: true })
@@ -112,5 +112,97 @@ export function useRetrySchedule() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+  })
+}
+
+export interface UpdateSchedulePayload {
+  scheduleId: string
+  targetGroupUrl?: string
+  scheduledAt?: string
+  postId?: string
+  postTitle?: string
+  postContent?: string
+  selectedImages?: string[]
+}
+
+export function useUpdateSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (payload: UpdateSchedulePayload) => {
+      // 1. Update schedules table
+      const scheduleUpdates: any = {}
+      if (payload.targetGroupUrl !== undefined) scheduleUpdates.target_group_url = payload.targetGroupUrl
+      if (payload.scheduledAt !== undefined) scheduleUpdates.scheduled_at = payload.scheduledAt
+
+      if (Object.keys(scheduleUpdates).length > 0) {
+        const { error: schedErr } = await (supabase.from('schedules') as any)
+          .update(scheduleUpdates)
+          .eq('id', payload.scheduleId)
+        if (schedErr) throw schedErr
+      }
+
+      // 2. Update generated_posts table
+      if (payload.postId) {
+        const postUpdates: any = {}
+        if (payload.postTitle !== undefined) postUpdates.title = payload.postTitle
+        if (payload.postContent !== undefined) postUpdates.content = payload.postContent
+        if (payload.selectedImages !== undefined) postUpdates.selected_images = payload.selectedImages
+
+        if (Object.keys(postUpdates).length > 0) {
+          const { error: postErr } = await (supabase.from('generated_posts') as any)
+            .update(postUpdates)
+            .eq('id', payload.postId)
+          if (postErr) throw postErr
+        }
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+      qc.invalidateQueries({ queryKey: ['schedule-stats'] })
+    },
+  })
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (scheduleId: string) => {
+      const { error } = await (supabase.from('schedules') as any)
+        .delete()
+        .eq('id', scheduleId)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+      qc.invalidateQueries({ queryKey: ['schedule-stats'] })
+    },
+  })
+}
+
+export function usePostNowSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (scheduleId: string) => {
+      const now = new Date().toISOString()
+      const { error } = await (supabase.from('schedules') as any)
+        .update({
+          scheduled_at: now,
+          status: 'pending',
+          error_log: null,
+        })
+        .eq('id', scheduleId)
+      if (error) throw error
+
+      // Trigger extension to poll and post immediately
+      try {
+        window.postMessage({ type: 'REALPOST_FORCE_POLL' }, '*')
+      } catch {
+        // ignore
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+      qc.invalidateQueries({ queryKey: ['schedule-stats'] })
+    },
   })
 }
