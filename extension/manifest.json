@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "RealPost AI Bridge",
+  "version": "1.0.0",
+  "description": "Tự động đăng bài BĐS lên Facebook Groups theo lịch từ RealPost AI",
+  "permissions": [
+    "tabs",
+    "storage",
+    "alarms",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.facebook.com/*",
+    "*://*.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.facebook.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "RealPost AI Bridge",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*",
+      "https://*.vercel.app/*",
+      "https://*.netlify.app/*"
+    ]
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
