@@ -32,8 +32,9 @@ async function setupAlarm() {
 // ALARM LISTENER — Main polling loop
 // ============================================================
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== POLL_ALARM_NAME) return
-  await pollAndPost()
+  if (alarm.name === POLL_ALARM_NAME || alarm.name === 'realpost-force') {
+    await pollAndPost()
+  }
 })
 
 async function pollAndPost() {
@@ -247,26 +248,54 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   }
 })
 
-// Also listen for window.postMessage bridge (for localhost dev)
+// Also listen for content script messages (for localhost dev and web app)
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'REALPOST_PING') {
     sendResponse({ type: 'REALPOST_PONG', token: chrome.runtime.id })
     return true
   }
+  if (message.type === 'REALPOST_CONFIG') {
+    setConfig({
+      supabaseUrl: message.supabaseUrl,
+      supabaseAnonKey: message.supabaseAnonKey,
+      accessToken: message.accessToken,
+      visibleMode: message.visibleMode ?? true,
+    }).then(() => {
+      console.log('[RealPost] Config updated via content script')
+      sendResponse({ success: true, extensionId: chrome.runtime.id })
+    }).catch((err) => {
+      sendResponse({ success: false, error: err.message })
+    })
+    return true
+  }
 })
 
 // ============================================================
-// NOTIFY WEB APP ON INSTALL
+// NOTIFY WEB APP ON INSTALL / UPDATE
 // ============================================================
 async function notifyWebApp() {
   try {
-    const tabs = await chrome.tabs.query({ url: ['http://localhost:*/*', 'https://*.vercel.app/*'] })
+    const tabs = await chrome.tabs.query({
+      url: [
+        'http://localhost/*',
+        'http://127.0.0.1/*',
+        'https://*.vercel.app/*',
+        'https://*.netlify.app/*'
+      ]
+    })
     for (const tab of tabs) {
       if (tab.id) {
+        // Must catch errors safely: tabs opened before extension load or without listeners
+        // will reject with "Could not establish connection. Receiving end does not exist."
         chrome.tabs.sendMessage(tab.id, { type: 'REALPOST_PONG', token: chrome.runtime.id })
+          .catch(() => {
+            // Normal: tab does not have active listener yet
+          })
       }
     }
-  } catch { /* ignore */ }
+  } catch (err) {
+    console.debug('[RealPost] notifyWebApp query ignored:', err)
+  }
 }
 
 // ============================================================
@@ -316,7 +345,7 @@ async function injectFacebookPost(content, title, imageUrls, groupUrl) {
     }
 
     if (!composerButton) {
-      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Composer not found' } })
+      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Composer not found' } }).catch(() => {})
       return
     }
 
@@ -339,7 +368,7 @@ async function injectFacebookPost(content, title, imageUrls, groupUrl) {
     }
 
     if (!editor) {
-      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Editor not found' } })
+      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Editor not found' } }).catch(() => {})
       return
     }
 
@@ -409,7 +438,7 @@ async function injectFacebookPost(content, title, imageUrls, groupUrl) {
     }
 
     if (!submitBtn) {
-      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Submit button not found' } })
+      chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: 'Submit button not found' } }).catch(() => {})
       return
     }
 
@@ -417,15 +446,14 @@ async function injectFacebookPost(content, title, imageUrls, groupUrl) {
     await randomDelay(3000, 6000)
 
     // Step 5: Verify success (URL change or confirmation)
-    const isSuccess = document.querySelector('[role="alert"]') === null
     chrome.runtime.sendMessage({
       type: 'REALPOST_POST_RESULT',
       result: { success: true, message: 'Post submitted' },
-    })
+    }).catch(() => {})
   } catch (err) {
     chrome.runtime.sendMessage({
       type: 'REALPOST_POST_RESULT',
       result: { success: false, error: err.message },
-    })
+    }).catch(() => {})
   }
 }

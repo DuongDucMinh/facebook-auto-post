@@ -53,11 +53,22 @@ export function useExtensionBridge() {
       if (event.data?.type === 'REALPOST_PONG') {
         // Extension is connected
         const { data: { user } } = await supabase.auth.getUser()
+        const { data: { session } } = await supabase.auth.getSession()
         if (user) {
           await (supabase.from('app_settings') as any)
             .update({ extension_connected: true, extension_token: event.data.token })
             .eq('user_id', user.id)
           qc.invalidateQueries({ queryKey: ['settings'] })
+
+          // Automatically sync credentials to Extension
+          if (session?.access_token) {
+            window.postMessage({
+              type: 'REALPOST_CONFIG',
+              supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+              supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+              accessToken: session.access_token,
+            }, '*')
+          }
         }
       }
     }

@@ -12,7 +12,10 @@
   ],
   "host_permissions": [
     "*://*.facebook.com/*",
-    "*://*.supabase.co/*"
+    "*://*.supabase.co/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -20,7 +23,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.facebook.com/*"],
+      "matches": [
+        "*://*.facebook.com/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://*.vercel.app/*",
+        "https://*.netlify.app/*"
+      ],
       "js": ["content-script.js"],
       "run_at": "document_idle"
     }
@@ -37,6 +46,7 @@
   "externally_connectable": {
     "matches": [
       "http://localhost:*/*",
+      "http://127.0.0.1:*/*",
       "https://*.vercel.app/*",
       "https://*.netlify.app/*"
     ]
