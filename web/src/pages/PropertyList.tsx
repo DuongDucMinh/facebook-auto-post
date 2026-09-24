@@ -72,8 +72,10 @@ function PropertyModal({ property, onClose }: PropertyModalProps) {
         toast.success('Đã thêm bất động sản mới')
       }
       onClose()
-    } catch {
-      toast.error('Có lỗi xảy ra, vui lòng thử lại')
+    } catch (err: any) {
+      console.error('[RealPost] Error saving property:', err)
+      const errorMsg = err?.message || err?.error_description || 'Có lỗi xảy ra, vui lòng thử lại'
+      toast.error(`Lỗi: ${errorMsg}`)
     }
   }
 

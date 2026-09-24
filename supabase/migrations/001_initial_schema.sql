@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.properties (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id       UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
   title         TEXT NOT NULL,
   raw_description TEXT DEFAULT '',
   images        TEXT[] DEFAULT '{}',
@@ -216,9 +216,16 @@ CREATE POLICY "Auth upload property images" ON storage.objects
     AND auth.role() = 'authenticated'
   );
 
+-- Authenticated update (required for upsert: true)
+CREATE POLICY "Auth update property images" ON storage.objects
+  FOR UPDATE USING (
+    bucket_id = 'property-images'
+    AND auth.role() = 'authenticated'
+  );
+
 -- Owner delete
 CREATE POLICY "Owner delete property images" ON storage.objects
   FOR DELETE USING (
     bucket_id = 'property-images'
-    AND auth.uid()::TEXT = (storage.foldername(name))[1]
+    AND auth.role() = 'authenticated'
   );
