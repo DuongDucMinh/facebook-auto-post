@@ -498,117 +498,207 @@ function randomBetween(min, max) {
 // ============================================================
 async function injectFacebookPost(content, title, preloadedImages, groupUrl) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const randomDelay = (min = 600, max = 1500) => sleep(Math.random() * (max - min) + min)
+  const randomDelay = (min = 600, max = 1200) => sleep(Math.floor(Math.random() * (max - min) + min))
 
-  // Helper: Convert Data URL to File object (synchronous, local, immune to Facebook CSP)
+  // Convert base64 Data URL to File (avoids any network request inside Facebook page)
   function dataUrlToFile(dataUrl, filename, mimeType) {
     try {
       const arr = dataUrl.split(',')
       const mime = mimeType || (arr[0].match(/:(.*?);/) || [])[1] || 'image/jpeg'
       const bstr = atob(arr[1])
-      let n = bstr.length
-      const u8arr = new Uint8Array(n)
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n)
-      }
+      const u8arr = new Uint8Array(bstr.length)
+      for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i)
       return new File([u8arr], filename, { type: mime })
     } catch (e) {
-      console.warn('[RealPost-Inject] Error converting Data URL to File:', e)
+      console.warn('[RealPost-Inject] dataUrlToFile error:', e)
       return null
     }
   }
 
-  // Helper: Check if Create Post dialog is already open
-  function findCreatePostDialog() {
-    const dialogs = document.querySelectorAll('div[role="dialog"]')
-    for (const d of dialogs) {
-      // Must NOT be a chat popup or notification popup
-      if (d.closest('[role="region"][aria-label*="Chat" i]')) continue
-      const aria = (d.getAttribute('aria-label') || '').toLowerCase()
-      const text = (d.innerText || d.textContent || '').toLowerCase()
-      if (
-        aria.includes('tạo bài viết') ||
-        aria.includes('create post') ||
-        aria.includes('create a post') ||
-        text.includes('tạo bài viết') ||
-        text.includes('create post') ||
-        (d.querySelector('[contenteditable="true"]') && (text.includes('bạn viết gì đi') || text.includes('write something') || text.includes('đăng') || text.includes('post')))
-      ) {
-        return d
-      }
-    }
-    return null
+  // Poll until el appears or timeout
+  function waitEl(selector, rootEl, timeoutMs) {
+    const root = rootEl || document
+    return new Promise((resolve) => {
+      const el = root.querySelector(selector)
+      if (el) { resolve(el); return }
+      const start = Date.now()
+      const timer = setInterval(() => {
+        const found = root.querySelector(selector)
+        if (found || Date.now() - start > timeoutMs) {
+          clearInterval(timer)
+          resolve(found || null)
+        }
+      }, 250)
+    })
   }
 
-  // Helper: Find composer trigger strictly OUTSIDE feed posts, articles, and comment boxes
-  function findComposerTrigger() {
-    // 1. Check data-pagelet composer containers
-    const pageletSelectors = [
+  // Wait for any selector to appear in document
+  function waitAny(selectors, rootEl, timeoutMs) {
+    const root = rootEl || document
+    return new Promise((resolve) => {
+      for (const sel of selectors) {
+        const el = root.querySelector(sel)
+        if (el) { resolve(el); return }
+      }
+      const start = Date.now()
+      const timer = setInterval(() => {
+        for (const sel of selectors) {
+          const el = root.querySelector(sel)
+          if (el) { clearInterval(timer); resolve(el); return }
+        }
+        if (Date.now() - start > timeoutMs) { clearInterval(timer); resolve(null) }
+      }, 250)
+    })
+  }
+
+  // Check whether dialog is the "Create Post" (Tạo bài viết) dialog, not chat/notifications
+  function isCreatePostDialog(d) {
+    if (!d) return false
+    // Must NOT be inside a chat sidebar
+    if (d.closest('[data-pagelet="MercuryFixedBottomContainer"]')) return false
+    if (d.closest('[aria-label*="Chat" i]')) return false
+    const ariaLabel = (d.getAttribute('aria-label') || '').toLowerCase()
+    // Positive signals
+    if (
+      ariaLabel.includes('tạo bài viết') ||
+      ariaLabel.includes('create post') ||
+      ariaLabel.includes('create a post')
+    ) return true
+    // Has a contenteditable inside AND the dialog's text/aria mentions đăng
+    const hasEditor = !!d.querySelector('[contenteditable="true"]')
+    const innerText = (d.innerText || d.textContent || '').toLowerCase()
+    if (hasEditor && (
+      innerText.includes('tạo bài viết') ||
+      innerText.includes('create post') ||
+      innerText.includes('đăng bài') ||
+      innerText.includes('bạn viết gì đi') ||
+      innerText.includes("what's on your mind") ||
+      innerText.includes('write something')
+    )) return true
+    return false
+  }
+
+  function findOpenCreatePostDialog() {
+    const allDialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+    return allDialogs.find(isCreatePostDialog) || null
+  }
+
+  // Find the "Bạn viết gì đi..." composer trigger bar (NOT cover photo/header/article/comment)
+  function findComposerBar() {
+    // Words that should NEVER be the composer bar - explicitly block these
+    const blockedButtonTexts = [
+      'chỉnh sửa', 'edit', 'share', 'chia sẻ', 'like', 'thích',
+      'comment', 'bình luận', 'follow', 'theo dõi', 'join', 'tham gia',
+      'invite', 'mời', 'more', 'xem thêm', 'see more', 'close', 'đóng',
+    ]
+
+    // Blocks that ALWAYS indicate a cover/profile header area - never touch these
+    function isInCoverOrHeader(el) {
+      if (!el) return false
+      // Facebook cover photo pagelots
+      const coverPagelets = [
+        '[data-pagelet*="Cover"]',
+        '[data-pagelet*="cover"]',
+        '[data-pagelet*="ProfilePhoto"]',
+        '[data-pagelet*="CoverPhoto"]',
+        '[data-pagelet*="ProfileHero"]',
+        '[data-pagelet*="GroupHeader"]',
+        '[data-pagelet*="PageHeader"]',
+      ]
+      for (const sel of coverPagelets) {
+        if (el.closest(sel)) return true
+      }
+      // If within the first 300px from top of page, it's likely the header/cover area
+      const rect = el.getBoundingClientRect()
+      if (rect.top < 0 || rect.bottom < 0) return false // Off screen - might be scrolled
+      // If element is very near the top of the viewport it's likely in the cover/header
+      // (only apply this check if page is scrolled to top, i.e. scrollY < 100)
+      if (window.scrollY < 100 && rect.top < 200 && rect.bottom < 280) return true
+      return false
+    }
+
+    // Strategy A: Specific inline-composer pagelet names ONLY (not generic "*Composer*")
+    const safePagelots = [
       'div[data-pagelet="GroupInlineComposer"]',
       'div[data-pagelet="FeedInlineComposer"]',
-      'div[data-pagelet*="InlineComposer"]',
-      'div[data-pagelet*="Composer"]',
+      'div[data-pagelet="GroupDiscussionInlineComposer"]',
     ]
-    for (const sel of pageletSelectors) {
+    for (const sel of safePagelots) {
       const pagelet = document.querySelector(sel)
-      if (pagelet) {
-        // Find the main prompt button inside composer
-        const btn = pagelet.querySelector('div[role="button"][tabindex="0"]') ||
-                    pagelet.querySelector('div[role="button"]')
-        if (btn) return btn
+      if (pagelet && !isInCoverOrHeader(pagelet)) {
+        console.log('[RealPost-Inject] Found safe pagelet:', sel)
+        const trigger =
+          pagelet.querySelector('div[role="button"][tabindex="0"]') ||
+          pagelet.querySelector('[role="button"]')
+        if (trigger && !isInCoverOrHeader(trigger)) return trigger
       }
     }
 
-    // 2. Search by text content across elements strictly OUTSIDE feed posts and comments
-    const triggerTexts = [
+    // Strategy B: Scan ALL spans in [role="main"], match exact composer phrases,
+    // with strict exclusions including cover/header area
+    const mainEl = document.querySelector('[role="main"]') || document.body
+    const composerPhrases = [
       'bạn viết gì đi',
       'viết gì đó',
-      'tạo bài viết công khai',
       'bạn đang nghĩ gì',
-      'write something',
-      'create a public post',
       "what's on your mind",
-      'tạo bài viết',
-      'create post',
+      'write something to the group',
+      'write something...',
+      'create a public post',
     ]
 
-    const candidates = Array.from(document.querySelectorAll('div[role="main"] span, div[role="main"] div[role="button"], span'))
-    for (const el of candidates) {
-      // CRITICAL FILTER: NEVER match anything inside a feed post, article, or comment box!
+    // Get all spans NOT in excluded zones, in DOM order (composer appears before feed)
+    const allSpans = Array.from(mainEl.querySelectorAll('span'))
+    for (const span of allSpans) {
+      // NEVER match if inside articles, forms, navigation, comments, or cover areas
       if (
-        el.closest('[role="article"]') ||
-        el.closest('[data-pagelet="GroupFeed"]') ||
-        el.closest('[data-pagelet^="FeedUnit"]') ||
-        el.closest('[aria-label*="bình luận" i]') ||
-        el.closest('[aria-label*="comment" i]') ||
-        el.closest('[role="navigation"]') ||
-        el.closest('header') ||
-        el.closest('form')
-      ) {
-        continue
-      }
+        span.closest('[role="article"]') ||
+        span.closest('form') ||
+        span.closest('[role="navigation"]') ||
+        span.closest('header') ||
+        span.closest('[aria-label*="Bình luận" i]') ||
+        span.closest('[aria-label*="Comment" i]') ||
+        span.closest('[data-pagelet="GroupFeed"]') ||
+        span.closest('[data-pagelet^="FeedUnit"]') ||
+        isInCoverOrHeader(span)
+      ) continue
 
-      const txt = (el.textContent || el.innerText || '').trim().toLowerCase()
-      for (const phrase of triggerTexts) {
-        if (txt === phrase || (txt.startsWith(phrase) && txt.length < 40)) {
-          return el.closest('div[role="button"]') || el
+      const txt = (span.textContent || '').trim().toLowerCase()
+      if (!composerPhrases.some((p) => txt === p)) continue
+
+      // Found a matching span - now find the nearest clickable container
+      let el = span
+      for (let depth = 0; depth < 8; depth++) {
+        if (!el) break
+        if (el.getAttribute('role') === 'button' || el.getAttribute('tabindex') === '0') {
+          // Double-check it's not blocked
+          const elText = (el.textContent || el.innerText || '').trim().toLowerCase()
+          if (blockedButtonTexts.some((b) => elText === b)) break
+          return el
         }
+        el = el.parentElement
       }
+      const closest = span.closest('[role="button"]')
+      if (closest && !isInCoverOrHeader(closest)) return closest
     }
 
-    // 3. Fallback: Search for "Tạo bài viết" / "Create post" button inside main header/actions
-    const actionButtons = Array.from(document.querySelectorAll('div[role="main"] div[role="button"], div[role="button"]'))
-    for (const btn of actionButtons) {
+    // Strategy C: Find by scanning all [role="button"] elements visible in DOM,
+    // picking those that directly contain the composer text, after strict filtering
+    const allButtons = Array.from(document.querySelectorAll('[role="button"]'))
+    for (const btn of allButtons) {
       if (
         btn.closest('[role="article"]') ||
         btn.closest('[data-pagelet="GroupFeed"]') ||
-        btn.closest('[aria-label*="bình luận" i]') ||
-        btn.closest('[aria-label*="comment" i]')
-      ) {
-        continue
-      }
-      const label = (btn.getAttribute('aria-label') || btn.innerText || '').trim().toLowerCase()
-      if (label.includes('tạo bài viết') || label.includes('create post') || label.includes('viết gì')) {
+        btn.closest('[aria-label*="Bình luận" i]') ||
+        btn.closest('[aria-label*="Comment" i]') ||
+        isInCoverOrHeader(btn)
+      ) continue
+
+      const btnText = (btn.textContent || btn.innerText || '').trim().toLowerCase()
+      // Must be blocked text check first
+      if (blockedButtonTexts.some((b) => btnText === b || btnText.startsWith(b + ' '))) continue
+
+      if (composerPhrases.some((p) => btnText === p || btnText.startsWith(p))) {
         return btn
       }
     }
@@ -616,305 +706,232 @@ async function injectFacebookPost(content, title, preloadedImages, groupUrl) {
     return null
   }
 
-  // Helper: Poll for enabled Submit button inside dialog
-  async function waitForSubmitButton(dlg, timeoutMs = 30000) {
+  // Send text reliably into a Lexical/DraftJS contenteditable
+  async function injectText(editor, text) {
+    editor.focus()
+    await sleep(300)
+
+    // Try 1: execCommand (works best for Lexical in Chromium)
+    try {
+      const selection = window.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(editor)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      const ok = document.execCommand('insertText', false, text)
+      if (ok && editor.textContent && editor.textContent.length > 4) {
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+        return true
+      }
+    } catch { /* continue */ }
+
+    // Try 2: Clipboard paste
+    try {
+      const dt = new DataTransfer()
+      dt.setData('text/plain', text)
+      editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+      await sleep(400)
+      if (editor.textContent && editor.textContent.length > 4) return true
+    } catch { /* continue */ }
+
+    // Try 3: beforeinput InputEvent
+    try {
+      editor.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, cancelable: true, inputType: 'insertText', data: text,
+      }))
+      await sleep(400)
+    } catch { /* continue */ }
+
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    return editor.textContent.length > 4
+  }
+
+  // Wait for the Đăng/Post button to be enabled inside dialog
+  async function waitForEnabledPostButton(dlg, timeoutMs = 25000) {
     const start = Date.now()
-    let lastNudgeTime = 0
-
     while (Date.now() - start < timeoutMs) {
-      const buttons = Array.from(dlg.querySelectorAll('div[role="button"], button'))
-
-      const candidate = buttons.reverse().find((b) => {
-        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase()
-        const text = (b.textContent || b.innerText || '').trim().toLowerCase()
-        return (
-          aria === 'đăng' ||
-          aria === 'post' ||
-          aria === 'chia sẻ' ||
-          aria === 'share' ||
-          text === 'đăng' ||
-          text === 'post' ||
-          text === 'chia sẻ' ||
-          text === 'share'
+      const btns = Array.from(dlg.querySelectorAll('div[role="button"], button'))
+      for (const b of btns.reverse()) {
+        const aria = (b.getAttribute('aria-label') || '').trim()
+        const txt = (b.textContent || b.innerText || '').trim()
+        const isPostBtn = (
+          aria === 'Đăng' || aria === 'Post' || aria === 'Share' || aria === 'Chia sẻ' ||
+          txt === 'Đăng' || txt === 'Post' || txt === 'Share' || txt === 'Chia sẻ'
         )
-      })
-
-      if (candidate) {
-        const ariaDisabled = candidate.getAttribute('aria-disabled')
-        const isDisabled =
-          ariaDisabled === 'true' ||
-          candidate.disabled === true ||
-          candidate.getAttribute('disabled') !== null
-
-        if (!isDisabled) {
-          return candidate
-        }
-
-        // Periodically nudge editor so Facebook updates button state
-        if (Date.now() - lastNudgeTime > 3500) {
-          lastNudgeTime = Date.now()
-          console.log('[RealPost-Inject] Submit button currently disabled, nudging editor...')
-          const ed = dlg.querySelector('[contenteditable="true"]')
-          if (ed) {
-            ed.focus()
-            ed.dispatchEvent(new InputEvent('input', { bubbles: true }))
-          }
+        if (!isPostBtn) continue
+        const disabled = b.getAttribute('aria-disabled') === 'true' ||
+          b.hasAttribute('disabled') || b.getAttribute('disabled') !== null
+        if (!disabled) return b
+      }
+      // Nudge editor every 2s to ensure React state is updated
+      if ((Date.now() - start) % 2000 < 300) {
+        const ed = dlg.querySelector('[contenteditable="true"]')
+        if (ed) {
+          ed.focus()
+          ed.dispatchEvent(new InputEvent('input', { bubbles: true }))
         }
       }
-
-      await sleep(600)
+      await sleep(400)
     }
-
     return null
   }
 
+  // ─── MAIN FLOW ────────────────────────────────────────────────────────────
+
   try {
-    console.log('[RealPost-Inject] Starting post injection on', window.location.href)
+    console.log('[RealPost-Inject] Start on:', window.location.href)
 
-    // Step 0: Scroll to top of group page to ensure composer is in view
-    window.scrollTo({ top: 0, behavior: 'instant' })
-    await sleep(1500)
+    // Scroll to TOP so composer bar is at the top of the viewport
+    window.scrollTo(0, 0)
+    await sleep(2000) // Let Facebook finish rendering after page load
 
-    // Step 1: Check if Create Post dialog is already open
-    let dialog = findCreatePostDialog()
+    // Check if Create Post dialog is already open
+    let dialog = findOpenCreatePostDialog()
+    console.log('[RealPost-Inject] Pre-existing dialog:', !!dialog)
 
     if (!dialog) {
-      const trigger = findComposerTrigger()
-      if (!trigger) {
-        const err = 'Không tìm thấy ô "Bạn viết gì đi..." trên Facebook Group. Hãy đảm bảo tài khoản đã tham gia nhóm và có quyền đăng bài.'
+      // Find the composer bar ("Bạn viết gì đi...")
+      const composerBar = findComposerBar()
+      if (!composerBar) {
+        const err = 'Không tìm thấy ô soạn bài viết "Bạn viết gì đi..." trên trang nhóm Facebook. Đảm bảo tài khoản đã tham gia nhóm và tab đang mở đúng trang nhóm.'
         chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: err } }).catch(() => {})
         return { success: false, error: err }
       }
 
-      console.log('[RealPost-Inject] Clicking composer trigger:', trigger)
-      trigger.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      await sleep(600)
-      trigger.click()
+      console.log('[RealPost-Inject] Composer bar found:', composerBar.tagName, composerBar.getAttribute('data-pagelet'))
 
-      // Wait up to 10s for dialog to open
-      const openStart = Date.now()
-      while (Date.now() - openStart < 10000) {
-        dialog = findCreatePostDialog()
-        if (dialog) break
-        await sleep(400)
+      // Scroll composer bar into view and click it
+      composerBar.scrollIntoView({ block: 'center' })
+      await sleep(500)
+      composerBar.click()
+
+      // Wait up to 8s for dialog to appear
+      const t1 = Date.now()
+      while (Date.now() - t1 < 8000 && !dialog) {
+        await sleep(300)
+        const candidate = findOpenCreatePostDialog()
+        if (candidate) dialog = candidate
       }
 
       if (!dialog) {
-        // Retry with dispatchEvent
-        console.log('[RealPost-Inject] Retrying trigger click with dispatchEvent...')
-        trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
-        const retryStart = Date.now()
-        while (Date.now() - retryStart < 6000) {
-          dialog = findCreatePostDialog()
-          if (dialog) break
-          await sleep(400)
+        // One more attempt with MouseEvent
+        composerBar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+        const t2 = Date.now()
+        while (Date.now() - t2 < 5000 && !dialog) {
+          await sleep(300)
+          const candidate = findOpenCreatePostDialog()
+          if (candidate) dialog = candidate
         }
       }
     }
 
     if (!dialog) {
-      const err = 'Không mở được hộp thoại "Tạo bài viết" trên Facebook ([role="dialog"] không xuất hiện sau khi click). Vui lòng kiểm tra quyền đăng bài trong nhóm.'
+      const err = 'Modal "Tạo bài viết" không mở được sau khi click. Vui lòng kiểm tra quyền đăng bài trong nhóm hoặc thử thao tác thủ công.'
       chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: err } }).catch(() => {})
       return { success: false, error: err }
     }
 
-    console.log('[RealPost-Inject] Create Post dialog is open and confirmed!')
+    console.log('[RealPost-Inject] Create Post dialog confirmed open!')
 
-    // Step 2: Find contenteditable editor INSIDE dialog
-    let editor = null
-    const edStart = Date.now()
-    while (Date.now() - edStart < 8000) {
-      editor = dialog.querySelector(
-        '[contenteditable="true"][data-lexical-editor="true"], [role="textbox"][contenteditable="true"], [contenteditable="true"]'
-      )
-      if (editor) break
-      await sleep(300)
-    }
+    // ── STEP 2: Find editor inside dialog ──
+    const editor = await waitEl('[contenteditable="true"]', dialog, 8000)
 
     if (!editor) {
-      const err = 'Không tìm thấy khung soạn thảo văn bản bên trong hộp thoại Tạo bài viết.'
+      const err = 'Không tìm thấy khung soạn thảo bên trong hộp thoại Tạo bài viết.'
       chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: err } }).catch(() => {})
       return { success: false, error: err }
     }
 
-    console.log('[RealPost-Inject] Editor found, inputting post content...')
-    editor.focus()
-    await sleep(400)
-
+    console.log('[RealPost-Inject] Editor found. Injecting text...')
     const fullText = title ? `${title}\n\n${content}` : content
+    await injectText(editor, fullText)
+    await randomDelay(500, 900)
 
-    // Set selection inside editor
-    try {
-      const sel = window.getSelection()
-      const range = document.createRange()
-      range.selectNodeContents(editor)
-      sel.removeAllRanges()
-      sel.addRange(range)
-    } catch (e) {
-      console.warn('[RealPost-Inject] Selection range warning:', e)
-    }
-
-    // 1. Try execCommand (standard for Lexical/DraftJS in Chromium)
-    let execOk = false
-    try {
-      execOk = document.execCommand('insertText', false, fullText)
-    } catch {
-      execOk = false
-    }
-
-    // 2. Try Clipboard paste fallback
-    if (!execOk || !editor.textContent || editor.textContent.length < 5) {
-      try {
-        const dt = new DataTransfer()
-        dt.setData('text/plain', fullText)
-        editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
-      } catch { /* ignore */ }
-    }
-
-    await sleep(600)
-
-    // 3. Try InputEvent beforeinput fallback
-    if (!editor.textContent || editor.textContent.length < 5) {
-      try {
-        editor.dispatchEvent(new InputEvent('beforeinput', {
-          bubbles: true,
-          cancelable: true,
-          inputType: 'insertText',
-          data: fullText,
-        }))
-      } catch { /* ignore */ }
-    }
-
-    // Nudge editor with input event
-    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ' ' }))
-    await randomDelay(600, 1200)
-
-    // Step 3: Attach images (if any)
-    const imageFiles = (preloadedImages || [])
-      .map((img) => dataUrlToFile(img.dataUrl, img.name, img.type))
-      .filter(Boolean)
-
+    // ── STEP 3: Attach images ──
+    const imageFiles = (preloadedImages || []).map((img) => dataUrlToFile(img.dataUrl, img.name, img.type)).filter(Boolean)
     if (imageFiles.length > 0) {
       console.log(`[RealPost-Inject] Attaching ${imageFiles.length} image(s)...`)
 
-      // Check if file input already exists in dialog
+      // Try to find file input already in dialog
       let fileInput = dialog.querySelector('input[type="file"]')
 
       if (!fileInput) {
-        // Find Photo/video button in dialog
-        const photoSelectors = [
+        // Click Photo/Video button inside dialog
+        const photoBtn = await waitAny([
           'div[aria-label="Ảnh/video"]',
           'div[aria-label="Photo/video"]',
-          'div[aria-label*="Ảnh/video"]',
-          'div[aria-label*="Photo/video"]',
-          'div[aria-label*="Ảnh"]',
-          'div[aria-label*="photo" i]',
-          'div[aria-label*="video" i]',
-          'div[data-pressable-container="true"] [aria-label*="Ảnh"]',
-        ]
+          'div[aria-label="Photo or video"]',
+          '[aria-label*="Photo"]',
+          '[aria-label*="Ảnh"]',
+        ], dialog, 3000)
 
-        let photoBtn = null
-        for (const sel of photoSelectors) {
-          photoBtn = dialog.querySelector(sel)
-          if (photoBtn) break
-        }
-
-        // If not found by aria-label, search by text inside dialog
         if (!photoBtn) {
-          const dialogButtons = Array.from(dialog.querySelectorAll('div[role="button"]'))
-          photoBtn = dialogButtons.find((b) => {
+          // Try by text
+          const dlgBtns = Array.from(dialog.querySelectorAll('div[role="button"]'))
+          const pb = dlgBtns.find((b) => {
             const t = (b.textContent || b.innerText || '').toLowerCase()
-            return t.includes('ảnh/video') || t.includes('photo/video') || t.includes('ảnh') || t.includes('photo')
+            return t.includes('ảnh') || t.includes('photo') || t.includes('hình')
           })
-        }
-
-        if (photoBtn) {
-          console.log('[RealPost-Inject] Clicking Photo/Video button in dialog...')
+          if (pb) { pb.click(); await sleep(1500) }
+        } else {
           photoBtn.click()
           await sleep(1500)
         }
-      }
 
-      // Wait for file input to appear (up to 8s)
-      const fileWait = Date.now()
-      while (Date.now() - fileWait < 8000) {
-        fileInput = dialog.querySelector('input[type="file"]') || document.querySelector('input[type="file"][accept*="image"]')
-        if (fileInput) break
-        await sleep(400)
+        fileInput = await waitEl('input[type="file"]', dialog, 5000) ||
+          await waitEl('input[type="file"]', document, 3000)
       }
 
       if (fileInput) {
-        console.log('[RealPost-Inject] Found file input, assigning files via DataTransfer...')
         const dt = new DataTransfer()
-        for (const f of imageFiles) {
-          dt.items.add(f)
+        imageFiles.forEach((f) => dt.items.add(f))
+        try { fileInput.files = dt.files } catch {
+          Object.defineProperty(fileInput, 'files', { value: dt.files, configurable: true })
         }
-
-        try {
-          fileInput.files = dt.files
-        } catch {
-          Object.defineProperty(fileInput, 'files', {
-            value: dt.files,
-            configurable: true,
-          })
-        }
-
         fileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
         fileInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-
-        // Also try drop event on dropzone
-        const dropZone = dialog.querySelector('div[role="button"][tabindex="0"]') || dialog
-        if (dropZone) {
-          try {
-            dropZone.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }))
-            dropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }))
-            dropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
-          } catch { /* ignore */ }
-        }
-
-        console.log('[RealPost-Inject] Waiting for Facebook to upload images (4s)...')
+        console.log('[RealPost-Inject] Images assigned, waiting for upload...')
         await sleep(4000)
       } else {
-        console.warn('[RealPost-Inject] File input not found in dialog, proceeding with text only')
+        console.warn('[RealPost-Inject] file input not found, posting without images')
       }
     }
 
-    // Step 4: Wait for Submit button to become ENABLED and click it
-    console.log('[RealPost-Inject] Searching for enabled Submit button in dialog...')
-    const submitBtn = await waitForSubmitButton(dialog, 30000)
+    // ── STEP 4: Click enabled Post/Đăng button ──
+    console.log('[RealPost-Inject] Waiting for Post button to be enabled...')
+    const postBtn = await waitForEnabledPostButton(dialog, 25000)
 
-    if (!submitBtn) {
-      const err = 'Không tìm thấy nút "Đăng" hoặc nút "Đăng" vẫn bị mờ (disabled) sau 30 giây. Vui lòng kiểm tra nhóm có bắt buộc trả lời câu hỏi khảo sát hoặc duyệt trước không.'
+    if (!postBtn) {
+      const err = 'Nút "Đăng" không sáng lên sau 25 giây. Có thể bài viết trống hoặc nhóm yêu cầu trả lời câu hỏi trước khi đăng.'
       chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: { success: false, error: err } }).catch(() => {})
       return { success: false, error: err }
     }
 
-    console.log('[RealPost-Inject] Clicking enabled Submit button:', submitBtn)
-    submitBtn.click()
+    console.log('[RealPost-Inject] Clicking Post button...')
+    postBtn.click()
 
-    // Wait up to 15s for dialog to close
-    let isClosed = false
-    const closeStart = Date.now()
-    while (Date.now() - closeStart < 15000) {
-      if (!document.contains(dialog) || dialog.getAttribute('aria-hidden') === 'true' || dialog.offsetParent === null) {
-        isClosed = true
+    // Wait up to 12s for dialog to close (confirm post submitted)
+    let confirmed = false
+    const t3 = Date.now()
+    while (Date.now() - t3 < 12000) {
+      if (!document.contains(dialog) || dialog.offsetParent === null) {
+        confirmed = true
         break
       }
       await sleep(500)
     }
 
-    console.log('[RealPost-Inject] Post submitted! Dialog closed:', isClosed)
-    const result = {
-      success: true,
-      message: isClosed ? 'Đã đăng bài thành công lên Facebook' : 'Đã bấm nút Đăng bài lên Facebook',
-    }
+    const result = { success: true, message: confirmed ? 'Đã đăng bài thành công' : 'Đã bấm nút Đăng (chờ xác nhận)' }
+    console.log('[RealPost-Inject] Done!', result.message)
     chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result }).catch(() => {})
     return result
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
-    console.error('[RealPost-Inject] Error:', errorMsg)
+    console.error('[RealPost-Inject] Fatal error:', errorMsg)
     const failResult = { success: false, error: errorMsg }
     chrome.runtime.sendMessage({ type: 'REALPOST_POST_RESULT', result: failResult }).catch(() => {})
     return failResult
   }
 }
+
+
