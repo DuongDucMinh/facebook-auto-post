@@ -711,39 +711,70 @@ async function injectFacebookPost(content, title, preloadedImages, groupUrl) {
     editor.focus()
     await sleep(300)
 
-    // Try 1: execCommand (works best for Lexical in Chromium)
+    // Step 1: Clear any pre-existing text or placeholder in editor
     try {
-      const selection = window.getSelection()
+      const sel = window.getSelection()
       const range = document.createRange()
       range.selectNodeContents(editor)
-      selection.removeAllRanges()
-      selection.addRange(range)
-      const ok = document.execCommand('insertText', false, text)
-      if (ok && editor.textContent && editor.textContent.length > 4) {
-        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
-        return true
-      }
-    } catch { /* continue */ }
+      sel.removeAllRanges()
+      sel.addRange(range)
+      document.execCommand('delete', false, null)
+      await sleep(150)
+    } catch { /* ignore */ }
 
-    // Try 2: Clipboard paste
+    // Step 2: Use Clipboard paste FIRST (preserves paragraphs and linebreaks in Lexical)
     try {
       const dt = new DataTransfer()
       dt.setData('text/plain', text)
       editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
-      await sleep(400)
-      if (editor.textContent && editor.textContent.length > 4) return true
-    } catch { /* continue */ }
+      await sleep(500)
 
-    // Try 3: beforeinput InputEvent
-    try {
-      editor.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true, cancelable: true, inputType: 'insertText', data: text,
-      }))
-      await sleep(400)
-    } catch { /* continue */ }
+      // If paste succeeded, exit immediately! Do NOT run any fallback methods!
+      if (editor.textContent && editor.textContent.trim().length > 10) {
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+        return true
+      }
+    } catch (e) {
+      console.warn('[RealPost-Inject] Paste event warning:', e)
+    }
+
+    // Step 3: ONLY if editor is STILL empty, try beforeinput with dataTransfer
+    if (!editor.textContent || editor.textContent.trim().length < 10) {
+      try {
+        const dt = new DataTransfer()
+        dt.setData('text/plain', text)
+        editor.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertFromPaste',
+          dataTransfer: dt,
+        }))
+        await sleep(500)
+        if (editor.textContent && editor.textContent.trim().length > 10) {
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+          return true
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Step 4: ONLY as absolute last resort if editor is STILL completely empty
+    if (!editor.textContent || editor.textContent.trim().length < 10) {
+      try {
+        const lines = text.split('\n')
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].length > 0) {
+            document.execCommand('insertText', false, lines[i])
+          }
+          if (i < lines.length - 1) {
+            document.execCommand('insertParagraph', false, null)
+          }
+        }
+        await sleep(300)
+      } catch { /* ignore */ }
+    }
 
     editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
-    return editor.textContent.length > 4
+    return (editor.textContent || '').trim().length > 10
   }
 
   // Wait for the Đăng/Post button to be enabled inside dialog
