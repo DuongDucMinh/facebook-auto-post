@@ -57,8 +57,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Force poll button
   forcePollBtn.addEventListener('click', () => {
-    chrome.alarms.create('realpost-force', { delayInMinutes: 0 })
-    pollStatus.textContent = 'Đang kiểm tra...'
-    setTimeout(() => window.close(), 2000)
+    pollStatus.textContent = 'Đang kiểm tra & đăng bài...'
+    try {
+      chrome.runtime.sendMessage({ type: 'REALPOST_FORCE_POLL' }, () => {
+        if (chrome.runtime.lastError) {
+          chrome.alarms.create('realpost-force', { when: Date.now() + 1000 })
+        }
+      })
+    } catch {
+      chrome.alarms.create('realpost-force', { when: Date.now() + 1000 })
+    }
+    setTimeout(() => window.close(), 1500)
   })
 })

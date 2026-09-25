@@ -37,47 +37,70 @@ export function useUpdateSettings() {
   })
 }
 
-// Extension bridge: check connection
+// Extension bridge: check connection and keep credentials synchronized
 export function useExtensionBridge() {
   const qc = useQueryClient()
 
   useEffect(() => {
+    const syncConfigToExtension = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token) {
+          window.postMessage({
+            type: 'REALPOST_CONFIG',
+            supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+            supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token,
+          }, '*')
+        }
+      } catch { /* ignore */ }
+    }
+
     const checkExtension = () => {
       try {
-        // Try to ping extension via window message
         window.postMessage({ type: 'REALPOST_PING' }, '*')
       } catch { /* extension not present */ }
     }
 
     const handleMessage = async (event: MessageEvent) => {
-      if (event.data?.type === 'REALPOST_PONG') {
-        // Extension is connected
+      if (event.data?.type === 'REALPOST_PONG' || event.data?.type === 'REALPOST_REQUEST_AUTH_SYNC') {
         const { data: { user } } = await supabase.auth.getUser()
-        const { data: { session } } = await supabase.auth.getSession()
-        if (user) {
+        if (user && event.data?.token) {
           await (supabase.from('app_settings') as any)
             .update({ extension_connected: true, extension_token: event.data.token })
             .eq('user_id', user.id)
           qc.invalidateQueries({ queryKey: ['settings'] })
-
-          // Automatically sync credentials to Extension
-          if (session?.access_token) {
-            window.postMessage({
-              type: 'REALPOST_CONFIG',
-              supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
-              supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-              accessToken: session.access_token,
-            }, '*')
-          }
         }
+        await syncConfigToExtension()
       }
     }
 
     window.addEventListener('message', handleMessage)
     checkExtension()
-    const interval = setInterval(checkExtension, 10_000)
+    syncConfigToExtension()
+
+    // Sync on token refresh or sign in/out
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.access_token) {
+        window.postMessage({
+          type: 'REALPOST_CONFIG',
+          supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+          supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+        }, '*')
+      }
+    })
+
+    const interval = setInterval(() => {
+      checkExtension()
+      syncConfigToExtension()
+    }, 15_000)
+
     return () => {
       window.removeEventListener('message', handleMessage)
+      subscription.unsubscribe()
       clearInterval(interval)
     }
   }, [qc])
