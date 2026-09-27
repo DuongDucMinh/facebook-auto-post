@@ -51,36 +51,139 @@ if (isFacebook) {
       .replace(/'/g, '&#039;')
   }
 
-  // Làm sạch triệt để Markdown thô thành văn bản chuẩn cho Facebook
-  function sanitizeFacebookText(rawText) {
-    if (!rawText) return ''
-    let clean = rawText
+  // Định dạng inline: In đậm [B] (**...**), In nghiêng [I] (*...*)
+  function formatInline(str) {
+    let s = escapeHtml(str)
+    // Bold: **text** hoặc __text__
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    s = s.replace(/__(.+?)__/g, '<strong>$1</strong>')
+    // Italic: *text* hoặc _text_
+    s = s.replace(/(?<!\*)\*(?!\*)([^\*]+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+    s = s.replace(/(?<!_)_(?!_)([^_]+?)(?<!_)_(?!_)/g, '<em>$1</em>')
+    return s
+  }
 
-    // 1. Chuyển các đề mục **Tiêu đề:** thành CHỮ IN HOA
-    clean = clean.replace(/\*\*([A-Za-z0-9À-ỹ\s\:\.\,\!\-\?]+)\*\*/g, (_match, p1) => {
-      return p1.length < 35 ? p1.toUpperCase() : p1
-    })
-    clean = clean.replace(/__([A-Za-z0-9À-ỹ\s\:\.\,\!\-\?]+)__/g, (_match, p1) => {
-      return p1.length < 35 ? p1.toUpperCase() : p1
-    })
+  // Chuyển Markdown sang HTML tương thích 100% với thanh công cụ Facebook Groups (H1 Header, Bold, Italic, Bullets)
+  function markdownToFacebookHtml(markdownText, title) {
+    let text = (markdownText || '').trim()
+    const postTitle = (title || '').trim()
 
-    // 2. Xóa các dấu sao hoặc gạch dưới còn sót lại
-    clean = clean.replace(/[\*\_]{1,3}/g, '')
+    let headerHtml = ''
+    if (postTitle) {
+      const cleanTitle = postTitle.replace(/^\s*(?:tiêu\s*đề|title)\s*[\:\-]\s*/i, '').trim()
+      const lines = text.split('\n')
+      const firstLine = lines[0]?.trim() || ''
+      const cleanFirstLine = firstLine
+        .replace(/^\s*#{1,6}\s*/, '')
+        .replace(/^\s*(?:tiêu\s*đề|title)\s*[\:\-]\s*/i, '')
+        .trim()
+      if (cleanFirstLine.toLowerCase() === cleanTitle.toLowerCase()) {
+        text = lines.slice(1).join('\n').trim()
+      }
+      headerHtml = `<h1>${escapeHtml(cleanTitle)}</h1>`
+    }
 
-    // 3. Xóa tiêu đề Markdown #, ##, ###
-    clean = clean.replace(/^\s*#{1,6}\s*/gm, '')
+    const rawBlocks = text.split(/\n\s*\n+/)
+    const htmlBlocks = []
+    if (headerHtml) {
+      htmlBlocks.push(headerHtml)
+    }
 
-    // 4. Giữ nguyên dấu gạch đầu dòng (-) chuẩn, chuyển bullet (*) thành (-)
-    clean = clean.replace(/^\s*\*+\s+/gm, '- ')
+    for (const block of rawBlocks) {
+      const trimmed = block.trim()
+      if (!trimmed) continue
 
-    // 5. Xóa backticks
-    clean = clean.replace(/`{1,3}/g, '')
+      const lines = trimmed.split('\n').map((l) => l.trim())
 
-    // 6. Chuẩn hóa khoảng trắng & ngắt dòng
-    const lines = clean.split('\n').map((line) => line.trimEnd())
-    clean = lines.join('\n').replace(/\n{3,}/g, '\n\n')
+      // Heading Markdown (# hoặc ##) -> H1 hoặc H2
+      if (lines.length === 1 && /^#{1,6}\s+/.test(lines[0])) {
+        const level = lines[0].match(/^(#{1,6})\s+/)?.[1]?.length || 1
+        const headingContent = lines[0].replace(/^#{1,6}\s+/, '').trim()
+        const tag = level === 1 ? 'h1' : 'h2'
+        htmlBlocks.push(`<${tag}>${formatInline(headingContent)}</${tag}>`)
+        continue
+      }
 
-    return clean.trim()
+      // Bullet list thuần túy (- hoặc *)
+      const isBulletList = lines.every((l) => /^[\-\*\•]\s+/.test(l))
+      if (isBulletList) {
+        const itemsHtml = lines
+          .map((l) => `<li>${formatInline(l.replace(/^[\-\*\•]\s+/, '').trim())}</li>`)
+          .join('')
+        htmlBlocks.push(`<ul>${itemsHtml}</ul>`)
+        continue
+      }
+
+      // Numbered list thuần túy (1., 2.)
+      const isNumberedList = lines.every((l) => /^\d+[\.\)]\s+/.test(l))
+      if (isNumberedList) {
+        const itemsHtml = lines
+          .map((l) => `<li>${formatInline(l.replace(/^\d+[\.\)]\s+/, '').trim())}</li>`)
+          .join('')
+        htmlBlocks.push(`<ol>${itemsHtml}</ol>`)
+        continue
+      }
+
+      // Blockquote (> hoặc ->)
+      if (lines.every((l) => /^(?:>|\->|–>)\s*/.test(l))) {
+        const quoteText = lines
+          .map((l) => l.replace(/^(?:>|\->|–>)\s*/, '').trim())
+          .join(' ')
+        htmlBlocks.push(`<blockquote><p>${formatInline(quoteText)}</p></blockquote>`)
+        continue
+      }
+
+      // Hỗn hợp tiêu đề đề mục + bullet list trong cùng 1 khối
+      const hasListItems = lines.some((l) => /^[\-\*\•]\s+/.test(l))
+      if (hasListItems) {
+        let currentList = []
+        for (const line of lines) {
+          if (/^[\-\*\•]\s+/.test(line)) {
+            currentList.push(`<li>${formatInline(line.replace(/^[\-\*\•]\s+/, '').trim())}</li>`)
+          } else {
+            if (currentList.length > 0) {
+              htmlBlocks.push(`<ul>${currentList.join('')}</ul>`)
+              currentList = []
+            }
+            if (line) {
+              htmlBlocks.push(`<p>${formatInline(line)}</p>`)
+            }
+          }
+        }
+        if (currentList.length > 0) {
+          htmlBlocks.push(`<ul>${currentList.join('')}</ul>`)
+        }
+        continue
+      }
+
+      // Đoạn văn thông thường (giữ ngắt dòng con bằng <br>)
+      const paragraphContent = lines.map((l) => formatInline(l)).join('<br>')
+      htmlBlocks.push(`<p>${paragraphContent}</p>`)
+    }
+
+    return htmlBlocks.join('')
+  }
+
+  // Chuyển đổi sang Plain Text sạch (không lộ thẻ HTML)
+  function markdownToPlainText(markdownText, title) {
+    let text = (markdownText || '').trim()
+    const postTitle = (title || '').trim()
+
+    if (postTitle) {
+      const cleanTitle = postTitle.replace(/^\s*(?:tiêu\s*đề|title)\s*[\:\-]\s*/i, '').trim()
+      const lines = text.split('\n')
+      const firstLine = lines[0]?.trim() || ''
+      const cleanFirstLine = firstLine
+        .replace(/^\s*#{1,6}\s*/, '')
+        .replace(/^\s*(?:tiêu\s*đề|title)\s*[\:\-]\s*/i, '')
+        .trim()
+      if (cleanFirstLine.toLowerCase() === cleanTitle.toLowerCase()) {
+        text = lines.slice(1).join('\n').trim()
+      }
+      text = `${cleanTitle}\n\n${text}`
+    }
+
+    return text
   }
 
   // Tiện ích chuyển Base64 Data URL sang File object
@@ -265,8 +368,8 @@ if (isFacebook) {
     return null
   }
 
-  // Điền văn bản vào Lexical editor với ngắt dòng từng đoạn chuẩn
-  async function injectTextIntoEditor(editor, text) {
+  // Điền văn bản vào Lexical editor với Header, Bold, Italic, Bullet lists
+  async function injectTextIntoEditor(editor, plainText, richHtml) {
     editor.focus()
     await sleep(250)
 
@@ -281,16 +384,18 @@ if (isFacebook) {
       await sleep(100)
     } catch {}
 
-    const lines = text.split('\n')
-    const htmlParagraphs = lines
-      .map((l) => (l.trim() ? `<p>${escapeHtml(l)}</p>` : `<p><br></p>`))
-      .join('')
-
-    // Bước 1: Thử ClipboardEvent paste với text/html và text/plain (Lexical nhận diện tốt nhất)
+    // Bước 1: Thử ClipboardEvent paste với text/html và text/plain
+    // Facebook Lexical parser tự động chuyển:
+    // <h1> / <h2> -> Header (cỡ chữ lớn hơn, in đậm)
+    // <strong> -> In đậm [B]
+    // <em> -> In nghiêng [I]
+    // <ul><li> -> Danh sách gạch đầu dòng
+    // <blockquote> -> Trích dẫn Quote
+    let success = false
     try {
       const dt = new DataTransfer()
-      dt.setData('text/plain', text)
-      dt.setData('text/html', htmlParagraphs)
+      dt.setData('text/plain', plainText)
+      dt.setData('text/html', richHtml)
       const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
@@ -301,15 +406,30 @@ if (isFacebook) {
 
       if (editor.textContent && editor.textContent.trim().length > 10) {
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
-        return true
+        success = true
       }
     } catch (e) {
       console.warn('[RealPost] Paste event error:', e)
     }
 
-    // Bước 2: Fallback gõ từng dòng với insertParagraph
-    if (!editor.textContent || editor.textContent.trim().length < 10) {
+    // Bước 2: Thử insertHTML qua execCommand nếu PasteEvent chưa được nhận
+    if (!success || !editor.textContent || editor.textContent.trim().length < 10) {
       try {
+        const ok = document.execCommand('insertHTML', false, richHtml)
+        await sleep(300)
+        if (ok && editor.textContent && editor.textContent.trim().length > 10) {
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+          success = true
+        }
+      } catch (err) {
+        console.warn('[RealPost] insertHTML error:', err)
+      }
+    }
+
+    // Bước 3: Fallback gõ từng dòng với insertParagraph
+    if (!success || !editor.textContent || editor.textContent.trim().length < 10) {
+      try {
+        const lines = plainText.split('\n')
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i]
           if (line) {
@@ -520,24 +640,30 @@ if (isFacebook) {
     const title = request.title || request.property?.title || 'Bất động sản'
     const images = request.images || []
     const rawImageUrls = request.rawImageUrls || request.property?.images || []
-    let combinedText = rawContent
-    if (title) {
-      const firstLine = rawContent.split('\n')[0].trim().toLowerCase()
-      if (firstLine !== title.trim().toLowerCase()) {
-        combinedText = `${title}\n\n${rawContent}`
-      }
-    }
-    const cleanContent = sanitizeFacebookText(combinedText)
+
+    const richHtml = markdownToFacebookHtml(rawContent, title)
+    const plainText = markdownToPlainText(rawContent, title)
 
     // Khởi tạo Banner thông báo
-    updateBanner('progress', title, 'Đang chuẩn bị đăng bài...', cleanContent)
+    updateBanner('progress', title, 'Đang chuẩn bị đăng bài (Header, In đậm, In nghiêng)...', plainText)
 
-    // Sao chép sẵn vào clipboard
+    // Sao chép sẵn cả HTML rich text và Plain text vào clipboard của hệ thống
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(cleanContent)
+      if (navigator.clipboard && navigator.clipboard.write) {
+        const textBlob = new Blob([plainText], { type: 'text/plain' })
+        const htmlBlob = new Blob([richHtml], { type: 'text/html' })
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': textBlob,
+            'text/html': htmlBlob,
+          }),
+        ])
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(plainText)
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[RealPost] Clipboard write warning:', e)
+    }
 
     // Cuộn lên đầu trang Facebook để thanh soạn bài hiển thị
     window.scrollTo(0, 0)
@@ -546,10 +672,10 @@ if (isFacebook) {
     // 1. Kiểm tra hộp thoại đã mở sẵn chưa
     let dialog = findOpenCreatePostDialog()
     if (!dialog) {
-      updateBanner('progress', title, '1/4. Đang mở hộp thoại Tạo bài viết...', cleanContent)
+      updateBanner('progress', title, '1/4. Đang mở hộp thoại Tạo bài viết...', plainText)
       const trigger = await findPostTrigger()
       if (!trigger) {
-        updateBanner('warning', title, 'Không tìm thấy ô tạo bài viết. Đảm bảo tài khoản đã tham gia nhóm này.', cleanContent)
+        updateBanner('warning', title, 'Không tìm thấy ô tạo bài viết. Đảm bảo tài khoản đã tham gia nhóm này.', plainText)
         throw new Error('Không tìm thấy ô tạo bài viết "Bạn viết gì đi...". Vui lòng kiểm tra quyền thành viên nhóm.')
       }
 
@@ -567,21 +693,21 @@ if (isFacebook) {
     }
 
     if (!dialog) {
-      updateBanner('warning', title, 'Không mở được hộp thoại Tạo bài viết.', cleanContent)
+      updateBanner('warning', title, 'Không mở được hộp thoại Tạo bài viết.', plainText)
       throw new Error('Không thể mở hộp thoại Tạo bài viết Facebook.')
     }
 
     console.log('[RealPost] Hộp thoại Tạo bài viết đã mở!')
 
-    // 2. Điền nội dung bài viết
-    updateBanner('progress', title, '2/4. Đang điền nội dung (chuẩn ngắt dòng từng đoạn)...', cleanContent)
+    // 2. Điền nội dung bài viết với Header, In đậm, In nghiêng
+    updateBanner('progress', title, '2/4. Đang điền nội dung (Header, In đậm, In nghiêng, Gạch đầu dòng)...', plainText)
     const editor = await waitEditor(dialog, 10000)
     if (!editor) {
-      updateBanner('warning', title, 'Không tìm thấy khung soạn thảo văn bản.', cleanContent)
+      updateBanner('warning', title, 'Không tìm thấy khung soạn thảo văn bản.', plainText)
       throw new Error('Không tìm thấy khung soạn thảo văn bản bên trong hộp thoại.')
     }
 
-    await injectTextIntoEditor(editor, cleanContent)
+    await injectTextIntoEditor(editor, plainText, richHtml)
     await sleep(1000)
 
     // 3. Đính kèm ảnh nếu có

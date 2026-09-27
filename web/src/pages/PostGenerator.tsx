@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Sparkles, RefreshCw, CalendarDays, X, Image as ImageIcon, Plus, CheckSquare } from 'lucide-react'
+import { Sparkles, RefreshCw, CalendarDays, X, Image as ImageIcon, Plus, CheckSquare, Eye } from 'lucide-react'
 import { toast } from 'sonner'
 import { addDays } from 'date-fns'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase'
 import { DEFAULT_GOLDEN_HOURS, getDefaultDateRange, generateScheduleSlots } from '@/lib/scheduler'
 import { randomPick } from '@/lib/utils'
 import { generatePostsWithGroq, type PostVariant } from '@/lib/groq'
+import { markdownToFacebookHtml } from '@/lib/formatter'
 import { ImageUploader } from '@/components/ui/image-uploader'
 import type { Property } from '@/types/database'
 
@@ -83,6 +84,24 @@ export function PostGenerator() {
   const [variantCards, setVariantCards] = useState<VariantCard[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
   const [activeTab, setActiveTab] = useState<'new' | 'saved'>('new')
+  const [previewModes, setPreviewModes] = useState<Record<number, boolean>>({})
+
+  const applyFormat = (cardIdx: number, prefix: string, suffix: string = '') => {
+    const card = variantCards[cardIdx]
+    if (!card) return
+    const textarea = document.getElementById(`card-content-${cardIdx}`) as HTMLTextAreaElement | null
+    if (!textarea) return
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const text = card.content
+    const selectedText = text.substring(start, end) || 'từ khóa'
+    const newText = text.substring(0, start) + prefix + selectedText + suffix + text.substring(end)
+    updateCard(cardIdx, { content: newText })
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + prefix.length, start + prefix.length + selectedText.length)
+    }, 50)
+  }
 
   const { register, handleSubmit, watch, setValue, control, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(formSchema) as any,
@@ -517,12 +536,79 @@ export function PostGenerator() {
 
                         {/* Content */}
                         <div>
-                          <Label className="text-xs">Nội dung bài viết (nhiều đoạn, gạch đầu dòng -, không icon)</Label>
-                          <Textarea
-                            value={card.content}
-                            onChange={(e) => updateCard(idx, { content: e.target.value })}
-                            className="mt-1 h-44 text-sm leading-relaxed"
-                          />
+                          <div className="flex items-center justify-between mb-1">
+                            <Label className="text-xs">Nội dung (Header, In đậm, In nghiêng, Gạch đầu dòng)</Label>
+                            <div className="flex items-center gap-1.5">
+                              {/* Format Buttons */}
+                              <div className="flex items-center bg-slate-100 rounded p-0.5 border border-slate-200 text-xs shadow-xs">
+                                <button
+                                  type="button"
+                                  title="In đậm (Ctrl+B / **text**)"
+                                  onClick={() => applyFormat(idx, '**', '**')}
+                                  className="px-1.5 py-0.5 font-bold hover:bg-white rounded text-slate-700 transition-colors cursor-pointer"
+                                >
+                                  B
+                                </button>
+                                <button
+                                  type="button"
+                                  title="In nghiêng (Ctrl+I / *text*)"
+                                  onClick={() => applyFormat(idx, '*', '*')}
+                                  className="px-1.5 py-0.5 italic font-serif hover:bg-white rounded text-slate-700 transition-colors cursor-pointer"
+                                >
+                                  I
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Tiêu đề (Header 2)"
+                                  onClick={() => applyFormat(idx, '## ', '')}
+                                  className="px-1.5 py-0.5 font-semibold text-[11px] hover:bg-white rounded text-slate-700 transition-colors cursor-pointer"
+                                >
+                                  H2
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Gạch đầu dòng (Bullet)"
+                                  onClick={() => applyFormat(idx, '- ', '')}
+                                  className="px-1.5 py-0.5 text-xs hover:bg-white rounded text-slate-700 transition-colors cursor-pointer"
+                                >
+                                  •
+                                </button>
+                              </div>
+
+                              {/* Toggle Preview Button */}
+                              <button
+                                type="button"
+                                onClick={() => setPreviewModes((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                                className={`text-[11px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 font-medium cursor-pointer ${
+                                  previewModes[idx]
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                <Eye className="w-3 h-3" />
+                                {previewModes[idx] ? 'Sửa văn bản' : 'Xem trước Facebook'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {previewModes[idx] ? (
+                            <div className="mt-1 h-44 overflow-y-auto rounded-md border border-slate-200 bg-white p-3 text-xs leading-relaxed shadow-inner">
+                              <div
+                                className="text-slate-800 space-y-2 [&>h1]:text-sm [&>h1]:font-bold [&>h1]:text-slate-900 [&>h1]:mb-2 [&>p]:mb-2 [&>ul]:list-disc [&>ul]:pl-5 [&>ul>li]:mb-1 [&>blockquote]:border-l-4 [&>blockquote]:border-emerald-500 [&>blockquote]:pl-2.5 [&>blockquote]:italic [&>blockquote]:text-slate-600"
+                                dangerouslySetInnerHTML={{
+                                  __html: markdownToFacebookHtml(card.content, card.title),
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <Textarea
+                              id={`card-content-${idx}`}
+                              value={card.content}
+                              onChange={(e) => updateCard(idx, { content: e.target.value })}
+                              className="mt-1 h-44 text-sm leading-relaxed"
+                              placeholder="Nhập nội dung bài viết với cú pháp markdown (**in đậm**, *in nghiêng*, - gạch đầu dòng)..."
+                            />
+                          )}
                         </div>
 
                         {/* 3 Selected Images */}

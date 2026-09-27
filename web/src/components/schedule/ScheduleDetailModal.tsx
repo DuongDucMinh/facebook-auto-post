@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useUpdateSchedule, useDeleteSchedule, usePostNowSchedule, useRetrySchedule } from '@/hooks/useSchedules'
 import { getStatusLabel, getStatusColor } from '@/lib/utils'
+import { markdownToFacebookHtml } from '@/lib/formatter'
 
 interface ScheduleDetailModalProps {
   schedule: any
@@ -150,12 +151,28 @@ export function ScheduleDetailModal({ schedule, onClose }: ScheduleDetailModalPr
     }
   }
 
-  // Copy full content
-  const handleCopyContent = () => {
+  // Copy full content (kèm HTML Header, Bold, Italic cho Facebook)
+  const handleCopyContent = async () => {
     const fullText = `${title}\n\n${content}`
-    navigator.clipboard.writeText(fullText)
+    const richHtml = markdownToFacebookHtml(content, title)
+    try {
+      if (navigator.clipboard && navigator.clipboard.write) {
+        const textBlob = new Blob([fullText], { type: 'text/plain' })
+        const htmlBlob = new Blob([richHtml], { type: 'text/html' })
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': textBlob,
+            'text/html': htmlBlob,
+          }),
+        ])
+      } else {
+        await navigator.clipboard.writeText(fullText)
+      }
+    } catch {
+      await navigator.clipboard.writeText(fullText)
+    }
     setCopied(true)
-    toast.success('Đã sao chép tiêu đề và nội dung bài viết!')
+    toast.success('Đã sao chép bài viết (kèm Header H1, In đậm, In nghiêng)!')
     setTimeout(() => setCopied(false), 2000)
   }
 

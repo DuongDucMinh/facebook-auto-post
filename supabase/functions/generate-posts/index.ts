@@ -31,7 +31,20 @@ Ví dụ minh họa biến tấu cho cùng một căn nhà:
 - Bài 3: Bán nhà Tạ Quang Bửu, vài bước ra phố lớn, nhà mới ở ngay pháp lý sạch, tầm 4 tỷ có thương lượng.
 - Bài 4: Bán nhà khu Tạ Quang Bửu, đường trước nhà xe vào thoải mái, an sinh đỉnh cao, hơn 4.xx tỷ.
 
-3. TUYỆT ĐỐI KHÔNG DÙNG ICON/EMOJI: Bài viết hoàn toàn bằng văn bản thuần túy (Plain text), không dùng bất kỳ biểu tượng cảm xúc nào để tránh bị thuật toán Facebook đánh giá spam. Dùng dấu gạch đầu dòng (-) và mũi tên (->) để tạo điểm nhấn tự nhiên.
+3. ĐỊNH DẠNG TƯƠNG THÍCH THANH CÔNG CỤ FACEBOOK (HEADER, IN ĐẬM [B], IN NGHIÊNG [I], GẠCH ĐẦU DÒNG):
+Hệ thống sử dụng thanh công cụ định dạng trực tiếp của Facebook Group (Header H1, In đậm B, In nghiêng I, Bullet list). BẮT BUỘC sử dụng cú pháp Markdown chuẩn để tự động kích hoạt các kiểu hiển thị này:
+- TIÊU ĐỀ: Bắt buộc VIẾT HOA toàn bộ, nằm riêng ở trường "title", đầy đủ thông tin (loại hình, khu vực, điểm mạnh, giá mờ). Hệ thống sẽ tự động biến tiêu đề thành Header lớn (H1) nổi bật trên Facebook.
+- ĐỀ MỤC CÁC PHẦN: BẮT BUỘC in đậm bằng cặp dấu sao kép: **Thông tin lô đất:** (hoặc **Thông tin căn nhà:**), **2 hướng khai thác:**, **Ưu thế nổi bật:**.
+- TỪ KHÓA & THÔNG SỐ CỐT LÕI: BẮT BUỘC in đậm **...** để nổi bật đập vào mắt người xem:
+  + Vị trí đắc địa: **Thôn Kim Ngưu, Văn Giang**, **Đại học Bách Khoa Cơ sở 2**...
+  + Thông số kỹ thuật: **Diện tích: 70m²**, **Kích thước: 5m × 14m**, **Mặt tiền rộng 5m nở hậu**, **Ngõ rộng 7m ô tô vào tận đất**...
+  + Tiềm năng & mức giá: **nhỉnh 3 tỷ**, **xây CCMN 8 tầng cho thuê**, **tiềm năng tăng giá vượt trội**...
+- CÂU ĐÚC KẾT / ĐIỂM NHẤN: In nghiêng bằng cặp dấu sao đơn *...* cho câu đúc kết giá trị hoặc cảm xúc (ví dụ: *-> Một lô đất – vừa có giá trị tích lũy an toàn, vừa tạo dòng tiền đều đặn hàng tháng.*).
+- TUYỆT ĐỐI KHÔNG DÙNG ICON/EMOJI: Bài viết chỉ dùng định dạng chữ chuyên nghiệp (Header, In đậm, In nghiêng, Gạch đầu dòng -).
+- THÔNG TIN LIÊN HỆ: Bắt buộc in đậm tên và các số điện thoại:
+  **Liên hệ ngay Em [Tên môi giới]**
+  **SĐT 1:** [Số điện thoại 1]
+  **SĐT 2:** [Số điện thoại 2]
 
 4. CẤU TRÚC ĐỊNH DẠNG: NHIỀU ĐOẠN RÕ RÀNG & CÓ GẠCH ĐẦU DÒNG (-) (TUYỆT ĐỐI KHÔNG VIẾT THÀNH 1 ĐOẠN VĂN DUY NHẤT):
 - TUYỆT ĐỐI KHÔNG viết dồn toàn bộ nội dung thành 1 đoạn văn liền tù tì.
@@ -55,36 +68,36 @@ Ví dụ minh họa biến tấu cho cùng một căn nhà:
 - NHÀ / CĂN HỘ: Nhấn mạnh công năng (số phòng, chất lượng xây dựng, độ thoáng sáng, tiện ích an sinh).
 - NGÕ NHỎ: Nhấn mạnh khoảng cách ra mặt phố lớn, ngõ thông ra các trục chính.
 
-8. VÍ DỤ CẤU TRÚC MẪU CHUẨN CỦA MỘT BÀI VIẾT:
+8. VÍ DỤ CẤU TRÚC MẪU CHUẨN CỦA MỘT BÀI VIẾT (CHUẨN ĐỊNH DẠNG):
 Tiêu đề: BÁN GẤP LÔ ĐẤT 70M² – SÁT VÁCH ĐH BÁCH KHOA CƠ SỞ 2, VĂN GIANG
 
-Thôn Kim Ngưu, Văn Giang – vị trí đón đầu nhu cầu ở, kinh doanh và cho thuê quanh khu vực Đại học Bách Khoa Cơ sở 2.
+**Thôn Kim Ngưu, Văn Giang** – vị trí đón đầu nhu cầu ở, kinh doanh và cho thuê quanh khu vực **Đại học Bách Khoa Cơ sở 2**.
 
-Thông tin lô đất:
+**Thông tin lô đất:**
 
-- Diện tích: 70m²
-- Kích thước: 5m × 14m, tiền hậu 5m
-- Ngõ trước đất rộng 7m, ô tô tải vào tận đất
-- Ngõ thông ra đường 40m, kết nối thuận tiện
+- **Diện tích:** 70m²
+- **Kích thước:** 5m × 14m, tiền hậu 5m
+- **Ngõ trước đất rộng 7m**, **ô tô tải vào tận đất**
+- **Ngõ thông** ra đường 40m, kết nối thuận tiện
 
-2 hướng khai thác:
-- Mua đầu tư, đón tiềm năng tăng giá theo sự phát triển của khu vực.
-- Xây tòa căn hộ/CCMN 8 tầng, khai thác nhu cầu thuê khi lượng sinh viên, giảng viên và người lao động gia tăng.
+**2 hướng khai thác:**
+- Mua đầu tư, đón **tiềm năng tăng giá** theo sự phát triển của khu vực.
+- Xây tòa căn hộ/CCMN 8 tầng, **khai thác nhu cầu thuê** khi lượng sinh viên, giảng viên và người lao động gia tăng.
 
--> Một lô đất – vừa có giá trị tích lũy, vừa có thể tạo dòng tiền.
+*-> Một lô đất – vừa có giá trị tích lũy an toàn, vừa có thể tạo dòng tiền đều đặn.*
 
-Liên hệ ngay Em Nhiên
-SĐT 1: 0912345678
-SĐT 2: 0987654321
+**Liên hệ ngay Em Nhiên**
+**SĐT 1:** 0912345678
+**SĐT 2:** 0987654321
 
 9. CHỮ KÝ VÀ THÔNG TIN LIÊN HỆ CỐ ĐỊNH:
 - Nếu người dùng cung cấp 2 số điện thoại, bắt buộc đăng cả 2 số theo mẫu:
-Liên hệ ngay Em [Tên môi giới]
-SĐT 1: [Số điện thoại 1]
-SĐT 2: [Số điện thoại 2]
+**Liên hệ ngay Em [Tên môi giới]**
+**SĐT 1:** [Số điện thoại 1]
+**SĐT 2:** [Số điện thoại 2]
 - Nếu chỉ có 1 số điện thoại:
-Liên hệ ngay Em [Tên môi giới]
-SĐT: [Số điện thoại 1]
+**Liên hệ ngay Em [Tên môi giới]**
+**SĐT:** [Số điện thoại 1]
 
 ### CÁC GÓC TIẾP CẬN CỦA PHONG CÁCH CHUYÊN GIA (XOAY VÒNG):
 1. Chuyên gia / Tổng quan giá trị: Đầy đủ thông số, đi thẳng vào ưu thế cốt lõi, công năng thực tế, phù hợp an cư bền vững.
@@ -182,26 +195,30 @@ YÊU CẦU ĐẶC BIỆT:
 ${batchStyles.map((st, idx) => `   - Biến thể ${startIndex + idx + 1}: ${st}`).join('\n')}
 
 2. YÊU CẦU TIÊU ĐỀ ("title"):
+   - BẮT BUỘC VIẾT HOA TOÀN BỘ TIÊU ĐỀ.
    - Mỗi tiêu đề PHẢI ĐẦY ĐỦ THÔNG TIN: (1) Loại hình + Khu vực, (2) Điểm mạnh nổi bật, (3) Giá trị/Công năng, (4) Mức giá mờ.
    - Giữa các bài viết, tiêu đề PHẢI BIẾN TẤU LINH HOẠT về trật tự từ, cách nhấn mạnh và từ ngữ diễn đạt, TUYỆT ĐỐI KHÔNG ĐƯỢC GIỐNG NHAU Y CHANG.
 
-3. YÊU CẦU ĐỊNH DẠNG NỘI DUNG ("content") (TUÂN THỦ TUYỆT ĐỐI):
+3. YÊU CẦU ĐỊNH DẠNG NỘI DUNG ("content") (TUÂN THỦ TUYỆT ĐỐI ĐỂ KÍCH HOẠT THANH CÔNG CỤ FACEBOOK):
    - BẮT BUỘC CHIA THÀNH NHIỀU ĐOẠN KHÁC NHAU, GIỮA CÁC ĐOẠN CÁCH NHAU 1 DÒNG TRỐNG (dùng ký tự \\n\\n). TUYỆT ĐỐI KHÔNG ĐƯỢC VIẾT DỒN THÀNH 1 ĐOẠN VĂN DUY NHẤT.
    - BẮT BUỘC SỬ DỤNG DẤU GẠCH ĐẦU DÒNG (-) cho phần thông số chi tiết (Diện tích, Kích thước, Mặt tiền, Ngõ/Đường...) và các hướng khai thác/tiềm năng.
+   - BẮT BUỘC IN ĐẬM (**...**) các đề mục chính: **Thông tin lô đất:** (hoặc **Thông tin căn nhà:**), **2 hướng khai thác:**.
+   - BẮT BUỘC IN ĐẬM (**...**) các từ khóa & thông số đắt giá: vị trí (**Thôn Kim Ngưu, Văn Giang**), thông số (**Diện tích: 70m²**, **Mặt tiền rộng 5m**, **Ngõ rộng 7m ô tô vào tận đất**), tiềm năng & giá (**xây CCMN cho thuê**, **tiềm năng tăng giá**, **nhỉnh 3 tỷ**).
+   - IN NGHIÊNG (*...*) câu đúc kết giá trị cốt lõi cuối bài.
    - Cấu trúc mẫu chuẩn cho "content":
-[1 - 2 câu mở đầu giới thiệu vị trí & tiềm năng đón đầu nhu cầu]
+[1 - 2 câu mở đầu giới thiệu vị trí & tiềm năng, có in đậm vị trí đắc địa]
 
-Thông tin lô đất: (hoặc Thông tin căn nhà:)
-- Diện tích: ...
-- Kích thước: ...
-- Ngõ/Đường trước đất/nhà: ...
-- Kết nối giao thông: ...
+**Thông tin lô đất:** (hoặc **Thông tin căn nhà:**)
+- **Diện tích:** ...
+- **Kích thước / Mặt tiền:** ...
+- **Ngõ/Đường trước đất/nhà:** ...
+- **Kết nối giao thông:** ...
 
-2 hướng khai thác: (hoặc Tiềm năng & Công năng:)
-- [Hướng khai thác 1 / Đầu tư sinh lời]
-- [Hướng khai thác 2 / Xây CCMN, cho thuê, ở sướng]
+**2 hướng khai thác:** (hoặc **Tiềm năng & Công năng:**)
+- [Hướng khai thác 1 / Đầu tư, có in đậm từ khóa quan trọng]
+- [Hướng khai thác 2 / Dòng tiền, có in đậm từ khóa quan trọng]
 
--> [1 câu chốt đúc kết giá trị cốt lõi / tích lũy / tạo dòng tiền]
+*-> [1 câu chốt đúc kết giá trị cốt lõi / tích lũy / tạo dòng tiền]*
 
 ${contactText}
 
@@ -218,8 +235,8 @@ Trả về duy nhất định dạng JSON thuần túy (JSON object có key "pos
     {
       "variant_index": ${startIndex + 1},
       "style": "${batchStyles[0] || 'Chuyên gia / Tổng quan giá trị'}",
-      "title": "Tiêu đề đầy đủ thông tin nhưng được biến tấu riêng",
-      "content": "Nội dung bài viết chia nhiều đoạn rõ ràng, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ"
+      "title": "TIÊU ĐỀ IN HOA ĐẦY ĐỦ THÔNG TIN BIẾN TẤU",
+      "content": "Nội dung bài viết chia nhiều đoạn, có in đậm **đề mục**, in đậm **thông số/từ khóa**, in nghiêng *câu đúc kết*, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ in đậm"
     }
   ]
 }`
@@ -298,8 +315,8 @@ serve(async (req) => {
 
     const hasPhone2 = Boolean(agent_phone_2 && agent_phone_2.trim().length > 0)
     const contactText = hasPhone2
-      ? `Liên hệ ngay Em ${agent_name}\nSĐT 1: ${agent_phone}\nSĐT 2: ${agent_phone_2.trim()}`
-      : `Liên hệ ngay Em ${agent_name}\nSĐT: ${agent_phone}`
+      ? `**Liên hệ ngay Em ${agent_name}**\n**SĐT 1:** ${agent_phone}\n**SĐT 2:** ${agent_phone_2.trim()}`
+      : `**Liên hệ ngay Em ${agent_name}**\n**SĐT:** ${agent_phone}`
 
     const batchSizes = getBatchSizes(num_variants, 5)
     let allVariants: any[] = []
