@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
   default_golden_hours   JSONB DEFAULT '["07:00","11:30","16:00","20:30"]',
   agent_name             TEXT DEFAULT 'An Nhiên',
   agent_phone            TEXT DEFAULT '0123456789',
+  agent_phone_2          TEXT DEFAULT '',
   extension_visible_mode BOOLEAN DEFAULT TRUE,
   custom_system_prompt   TEXT DEFAULT NULL,
   updated_at             TIMESTAMPTZ DEFAULT NOW()

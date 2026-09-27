@@ -69,6 +69,7 @@ export function Sidebar() {
         {/* User */}
         {(() => {
           const envPhone = (import.meta as any).env?.VITE_AGENT_PHONE
+          const envPhone2 = (import.meta as any).env?.VITE_AGENT_PHONE_2
           const envName = (import.meta as any).env?.VITE_AGENT_NAME
           const displayName = (settings?.agent_name && settings.agent_name !== 'An Nhiên')
             ? settings.agent_name
@@ -76,6 +77,10 @@ export function Sidebar() {
           const displayPhone = (settings?.agent_phone && settings.agent_phone !== '0123456789')
             ? settings.agent_phone
             : (envPhone || settings?.agent_phone || '')
+          const localPhone2 = localStorage.getItem('REALPOST_AGENT_PHONE_2') || ''
+          const displayPhone2 = settings?.agent_phone_2 || localPhone2 || envPhone2 || ''
+
+          const phoneText = [displayPhone, displayPhone2].filter(Boolean).join(' • ')
 
           return (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer">
@@ -86,7 +91,7 @@ export function Sidebar() {
                 <p className="text-xs font-medium text-slate-200 truncate">
                   {displayName}
                 </p>
-                <p className="text-xs text-slate-500 truncate">{displayPhone}</p>
+                <p className="text-xs text-slate-500 truncate">{phoneText || 'Chưa có SĐT'}</p>
               </div>
             </div>
           )

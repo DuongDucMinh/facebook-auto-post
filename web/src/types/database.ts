@@ -134,6 +134,7 @@ export interface Database {
           default_golden_hours: string[]
           agent_name: string
           agent_phone: string
+          agent_phone_2: string | null
           extension_visible_mode: boolean
           custom_system_prompt: string | null
           updated_at: string
@@ -146,6 +147,7 @@ export interface Database {
           default_golden_hours?: string[]
           agent_name?: string
           agent_phone?: string
+          agent_phone_2?: string | null
           extension_visible_mode?: boolean
           custom_system_prompt?: string | null
           updated_at?: string
@@ -157,6 +159,7 @@ export interface Database {
           default_golden_hours?: string[]
           agent_name?: string
           agent_phone?: string
+          agent_phone_2?: string | null
           extension_visible_mode?: boolean
           custom_system_prompt?: string | null
           updated_at?: string

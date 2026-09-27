@@ -55,11 +55,16 @@ interface VariantCard {
 }
 
 const STYLE_COLORS: Record<string, string> = {
-  'Kể chuyện (Storytelling)': 'bg-purple-100 text-purple-700',
-  'Hóm hỉnh / Đời thực': 'bg-yellow-100 text-yellow-700',
   'Chuyên gia / Ngắn gọn': 'bg-blue-100 text-blue-700',
-  'Tâm sự nghề': 'bg-emerald-100 text-emerald-700',
+  'Chuyên gia / Tổng quan giá trị': 'bg-blue-100 text-blue-700',
+  'Chuyên gia / Dòng tiền & Tiềm năng': 'bg-emerald-100 text-emerald-700',
+  'Chuyên gia / Vị trí & An sinh': 'bg-cyan-100 text-cyan-700',
+  'Chuyên gia / Đánh giá thực tế': 'bg-amber-100 text-amber-700',
+  'Chuyên gia / Điểm nhấn độc bản': 'bg-indigo-100 text-indigo-700',
+  'Hóm hỉnh / Đời thực': 'bg-yellow-100 text-yellow-700',
   'Kích thích tò mò (Hook mạnh)': 'bg-red-100 text-red-700',
+  'Kể chuyện (Storytelling)': 'bg-purple-100 text-purple-700',
+  'Tâm sự nghề': 'bg-slate-100 text-slate-700',
 }
 
 export function PostGenerator() {
@@ -129,6 +134,7 @@ export function PostGenerator() {
     try {
       const envName = (import.meta as any).env?.VITE_AGENT_NAME
       const envPhone = (import.meta as any).env?.VITE_AGENT_PHONE
+      const envPhone2 = (import.meta as any).env?.VITE_AGENT_PHONE_2
 
       const agentName = (settings?.agent_name && settings.agent_name !== 'An Nhiên')
         ? settings.agent_name
@@ -137,6 +143,9 @@ export function PostGenerator() {
       const agentPhone = (settings?.agent_phone && settings.agent_phone !== '0123456789')
         ? settings.agent_phone
         : (envPhone || settings?.agent_phone || '0123456789')
+
+      const localPhone2 = localStorage.getItem('REALPOST_AGENT_PHONE_2') || ''
+      const agentPhone2 = settings?.agent_phone_2 || localPhone2 || envPhone2 || ''
 
       let variants: PostVariant[] = []
 
@@ -149,6 +158,7 @@ export function PostGenerator() {
           numVariants: data.numVariants,
           agentName,
           agentPhone,
+          agentPhone2,
           apiKey: groqKey,
           customSystemPrompt: settings?.custom_system_prompt || localStorage.getItem('REALPOST_CUSTOM_SYSTEM_PROMPT'),
         })
@@ -171,6 +181,7 @@ export function PostGenerator() {
             num_variants: data.numVariants,
             agent_name: agentName,
             agent_phone: agentPhone,
+            agent_phone_2: agentPhone2,
           }),
         })
 
@@ -488,11 +499,11 @@ export function PostGenerator() {
 
                         {/* Content */}
                         <div>
-                          <Label className="text-xs">Nội dung bài viết (6 phần, không icon)</Label>
+                          <Label className="text-xs">Nội dung bài viết (nhiều đoạn, gạch đầu dòng -, không icon)</Label>
                           <Textarea
                             value={card.content}
                             onChange={(e) => updateCard(idx, { content: e.target.value })}
-                            className="mt-1 h-32 text-sm leading-relaxed"
+                            className="mt-1 h-44 text-sm leading-relaxed"
                           />
                         </div>
 

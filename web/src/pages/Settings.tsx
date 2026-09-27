@@ -26,6 +26,7 @@ export function SettingsPage() {
   const updateSettings = useUpdateSettings()
   const [agentName, setAgentName] = useState('')
   const [agentPhone, setAgentPhone] = useState('')
+  const [agentPhone2, setAgentPhone2] = useState('')
   const [visibleMode, setVisibleMode] = useState(true)
   const [customPrompt, setCustomPrompt] = useState('')
   const [promptViewTab, setPromptViewTab] = useState<'editor' | 'default'>('editor')
@@ -34,11 +35,15 @@ export function SettingsPage() {
   const [initialized, setInitialized] = useState(false)
   if (settings && !initialized) {
     const envPhone = (import.meta as any).env?.VITE_AGENT_PHONE
+    const envPhone2 = (import.meta as any).env?.VITE_AGENT_PHONE_2
     const envName = (import.meta as any).env?.VITE_AGENT_NAME
 
     const initialPhone = (settings.agent_phone && settings.agent_phone !== '0123456789')
       ? settings.agent_phone
       : (envPhone || settings.agent_phone || '0123456789')
+
+    const localPhone2 = localStorage.getItem('REALPOST_AGENT_PHONE_2') || ''
+    const initialPhone2 = settings.agent_phone_2 ?? (localPhone2 || envPhone2 || '')
 
     const initialName = (settings.agent_name && settings.agent_name !== 'An Nhiên')
       ? settings.agent_name
@@ -46,6 +51,7 @@ export function SettingsPage() {
 
     setAgentName(initialName)
     setAgentPhone(initialPhone)
+    setAgentPhone2(initialPhone2)
     setVisibleMode(settings.extension_visible_mode ?? true)
     const localPrompt = localStorage.getItem('REALPOST_CUSTOM_SYSTEM_PROMPT')
     setCustomPrompt(settings.custom_system_prompt ?? (localPrompt || SYSTEM_PROMPT_BDS))
@@ -54,7 +60,25 @@ export function SettingsPage() {
 
   const handleSaveAgent = async () => {
     try {
-      await updateSettings.mutateAsync({ agent_name: agentName, agent_phone: agentPhone })
+      try {
+        await updateSettings.mutateAsync({
+          agent_name: agentName,
+          agent_phone: agentPhone,
+          agent_phone_2: agentPhone2.trim() || null,
+        })
+      } catch (dbErr: any) {
+        console.warn('Có thể bảng app_settings chưa có cột agent_phone_2, lưu agent_name & agent_phone:', dbErr)
+        await updateSettings.mutateAsync({
+          agent_name: agentName,
+          agent_phone: agentPhone,
+        })
+      }
+
+      if (agentPhone2.trim()) {
+        localStorage.setItem('REALPOST_AGENT_PHONE_2', agentPhone2.trim())
+      } else {
+        localStorage.removeItem('REALPOST_AGENT_PHONE_2')
+      }
       toast.success('Đã lưu thông tin môi giới thành công')
     } catch (err: any) {
       console.error('Lỗi lưu thông tin môi giới:', err)
@@ -248,31 +272,45 @@ export function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Thông tin môi giới mặc định</CardTitle>
-          <CardDescription>Thông tin này được chèn cố định vào phần chữ ký cuối mỗi bài viết</CardDescription>
+          <CardDescription>Thông tin này được chèn cố định vào phần chữ ký cuối mỗi bài viết (hỗ trợ 2 số điện thoại)</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <Label>Tên môi giới</Label>
               <Input
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
-                placeholder="VD: An Nhiên"
+                placeholder="VD: Em Nhiên"
                 className="mt-1"
               />
             </div>
             <div>
-              <Label>Số điện thoại</Label>
+              <Label>Số điện thoại 1 <span className="text-red-500">*</span></Label>
               <Input
                 value={agentPhone}
                 onChange={(e) => setAgentPhone(e.target.value)}
-                placeholder="VD: 0123456789"
+                placeholder="VD: 0912345678"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label>Số điện thoại 2 <span className="text-slate-400 font-normal">(tùy chọn)</span></Label>
+              <Input
+                value={agentPhone2}
+                onChange={(e) => setAgentPhone2(e.target.value)}
+                placeholder="VD: 0987654321"
                 className="mt-1"
               />
             </div>
           </div>
-          <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-600">
-            Preview chữ ký cuối bài: <strong>Liên hệ trực tiếp em {agentName} - SĐT: {agentPhone}</strong>
+          <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-600 space-y-1.5">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preview chữ ký cuối bài:</p>
+            <div className="font-mono text-xs whitespace-pre-line bg-white p-3 rounded border border-slate-200 text-slate-800 leading-relaxed">
+              {agentPhone2.trim()
+                ? `Liên hệ ngay Em ${agentName || 'Nhiên'}\nSĐT 1: ${agentPhone || '0912345678'}\nSĐT 2: ${agentPhone2}`
+                : `Liên hệ ngay Em ${agentName || 'Nhiên'}\nSĐT: ${agentPhone || '0912345678'}`}
+            </div>
           </div>
           <Button onClick={handleSaveAgent} disabled={updateSettings.isPending}>
             {updateSettings.isPending ? 'Đang lưu...' : 'Lưu thông tin'}
