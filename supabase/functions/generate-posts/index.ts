@@ -132,6 +132,143 @@ function cleanGeneratedPost(post: any, index: number) {
   }
 }
 
+const ALL_EXPERT_STYLES = [
+  'Chuyên gia / Tổng quan giá trị',
+  'Chuyên gia / Dòng tiền & Tiềm năng',
+  'Chuyên gia / Vị trí & An sinh',
+  'Chuyên gia / Đánh giá thực tế',
+  'Chuyên gia / Điểm nhấn độc bản',
+  'Chuyên gia / Tiềm năng hạ tầng & Quy hoạch',
+  'Chuyên gia / Phân tích suất đầu tư & Thanh khoản',
+  'Chuyên gia / So sánh lợi thế phân khúc',
+  'Chuyên gia / Cơ hội an cư bền vững',
+  'Chuyên gia / Đòn bẩy tài chính & Giữ vốn',
+  'Chuyên gia / Kết nối giao thông & Tiện ích sống',
+  'Chuyên gia / Phân tích giá trị thặng dư',
+]
+
+function getBatchSizes(total: number, maxBatchSize = 5): number[] {
+  if (total <= maxBatchSize) return [total]
+  const numBatches = Math.ceil(total / maxBatchSize)
+  const baseSize = Math.floor(total / numBatches)
+  const remainder = total % numBatches
+  const batches: number[] = []
+  for (let i = 0; i < numBatches; i++) {
+    batches.push(baseSize + (i < remainder ? 1 : 0))
+  }
+  return batches
+}
+
+async function generateBatch(
+  batchSize: number,
+  startIndex: number,
+  title: string,
+  description: string,
+  contactText: string,
+  apiKey: string
+) {
+  const batchStyles = Array.from({ length: batchSize }, (_, i) => {
+    return ALL_EXPERT_STYLES[(startIndex + i) % ALL_EXPERT_STYLES.length]
+  })
+
+  const userPrompt = `Thông tin căn bất động sản:
+- Tiêu đề gốc: ${title}
+- Mô tả chi tiết: ${description}
+- Thông tin liên hệ cố định bắt buộc đặt ở cuối bài (giữ nguyên định dạng từng dòng):
+${contactText}
+
+YÊU CẦU ĐẶC BIỆT:
+1. Hãy tạo đúng chính xác ${batchSize} bài viết biến thể khác nhau (từ biến thể #${startIndex + 1} đến #${startIndex + batchSize}) theo phong cách CHUYÊN GIA / THỰC TẾ, các góc tiếp cận:
+${batchStyles.map((st, idx) => `   - Biến thể ${startIndex + idx + 1}: ${st}`).join('\n')}
+
+2. YÊU CẦU TIÊU ĐỀ ("title"):
+   - Mỗi tiêu đề PHẢI ĐẦY ĐỦ THÔNG TIN: (1) Loại hình + Khu vực, (2) Điểm mạnh nổi bật, (3) Giá trị/Công năng, (4) Mức giá mờ.
+   - Giữa các bài viết, tiêu đề PHẢI BIẾN TẤU LINH HOẠT về trật tự từ, cách nhấn mạnh và từ ngữ diễn đạt, TUYỆT ĐỐI KHÔNG ĐƯỢC GIỐNG NHAU Y CHANG.
+
+3. YÊU CẦU ĐỊNH DẠNG NỘI DUNG ("content") (TUÂN THỦ TUYỆT ĐỐI):
+   - BẮT BUỘC CHIA THÀNH NHIỀU ĐOẠN KHÁC NHAU, GIỮA CÁC ĐOẠN CÁCH NHAU 1 DÒNG TRỐNG (dùng ký tự \\n\\n). TUYỆT ĐỐI KHÔNG ĐƯỢC VIẾT DỒN THÀNH 1 ĐOẠN VĂN DUY NHẤT.
+   - BẮT BUỘC SỬ DỤNG DẤU GẠCH ĐẦU DÒNG (-) cho phần thông số chi tiết (Diện tích, Kích thước, Mặt tiền, Ngõ/Đường...) và các hướng khai thác/tiềm năng.
+   - Cấu trúc mẫu chuẩn cho "content":
+[1 - 2 câu mở đầu giới thiệu vị trí & tiềm năng đón đầu nhu cầu]
+
+Thông tin lô đất: (hoặc Thông tin căn nhà:)
+- Diện tích: ...
+- Kích thước: ...
+- Ngõ/Đường trước đất/nhà: ...
+- Kết nối giao thông: ...
+
+2 hướng khai thác: (hoặc Tiềm năng & Công năng:)
+- [Hướng khai thác 1 / Đầu tư sinh lời]
+- [Hướng khai thác 2 / Xây CCMN, cho thuê, ở sướng]
+
+-> [1 câu chốt đúc kết giá trị cốt lõi / tích lũy / tạo dòng tiền]
+
+${contactText}
+
+   - Viết ngắn gọn, súc tích, chuyên nghiệp, đi thẳng vào giá trị thật.
+   - TUYỆT ĐỐI KHÔNG BỊA CHUYỆN, không bịa người mua, không kể chuyện dẫn ai đi xem hay đã bán cho ai.
+   - TUYỆT ĐỐI KHÔNG NHẮC TÊN BẤT KỲ NGƯỜI LẠ NÀO.
+   - TUYỆT ĐỐI KHÔNG dùng các nhãn máy móc như "Phần 1:", "Phần 2:".
+   - Tuyệt đối KHÔNG có icon/emoji.
+   - Cuối bài gắn chính xác khối thông tin liên hệ như trên.
+
+Trả về duy nhất định dạng JSON thuần túy (JSON object có key "posts" là mảng gồm đúng ${batchSize} phần tử):
+{
+  "posts": [
+    {
+      "variant_index": ${startIndex + 1},
+      "style": "${batchStyles[0] || 'Chuyên gia / Tổng quan giá trị'}",
+      "title": "Tiêu đề đầy đủ thông tin nhưng được biến tấu riêng",
+      "content": "Nội dung bài viết chia nhiều đoạn rõ ràng, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ"
+    }
+  ]
+}`
+
+  const response = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 4096,
+      temperature: 0.85,
+      response_format: { type: 'json_object' },
+    }),
+  })
+
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`Groq API error: ${response.status} — ${errText}`)
+  }
+
+  const groqData = await response.json()
+  const rawText = groqData.choices?.[0]?.message?.content ?? '{"posts":[]}'
+
+  let parsed: any = {}
+  try {
+    parsed = JSON.parse(rawText)
+  } catch (e) {
+    console.error('JSON parse error from Groq batch response:', e)
+    return []
+  }
+
+  const rawVariants = Array.isArray(parsed) ? parsed : (parsed.posts ?? parsed.variants ?? [])
+  return rawVariants.map((item: any, idx: number) => {
+    const cleaned = cleanGeneratedPost(item, startIndex + idx)
+    cleaned.variant_index = startIndex + idx + 1
+    if (!cleaned.style || cleaned.style === 'Chuyên gia / Ngắn gọn') {
+      cleaned.style = batchStyles[idx] || 'Chuyên gia / Thực tế'
+    }
+    return cleaned
+  })
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -164,69 +301,47 @@ serve(async (req) => {
       ? `Liên hệ ngay Em ${agent_name}\nSĐT 1: ${agent_phone}\nSĐT 2: ${agent_phone_2.trim()}`
       : `Liên hệ ngay Em ${agent_name}\nSĐT: ${agent_phone}`
 
-    const userPrompt = `Thông tin bất động sản cần viết bài:
-- Tên/Tiêu đề: ${title}
-- Mô tả thô: ${description}
-- Thông tin liên hệ cố định bắt buộc đặt ở cuối bài (giữ nguyên định dạng từng dòng):
-${contactText}
+    const batchSizes = getBatchSizes(num_variants, 5)
+    let allVariants: any[] = []
+    let currentStartIndex = 0
 
-YÊU CẦU ĐẶC BIỆT:
-1. Hãy tạo đúng ${num_variants} bài viết biến thể khác nhau theo phong cách CHUYÊN GIA / THỰC TẾ, xoay vòng các góc tiếp cận:
-   - Biến thể 1: Chuyên gia / Tổng quan giá trị
-   - Biến thể 2: Chuyên gia / Dòng tiền & Tiềm năng
-   - Biến thể 3: Chuyên gia / Vị trí & An sinh
-   - Biến thể 4: Chuyên gia / Đánh giá thực tế
-   - Biến thể 5: Chuyên gia / Điểm nhấn độc bản
-2. TIÊU ĐỀ: Mỗi tiêu đề ("title") PHẢI ĐẦY ĐỦ THÔNG TIN: (1) Loại hình + Khu vực, (2) Điểm mạnh nổi bật, (3) Giá trị/Công năng, (4) Mức giá mờ. Giữa các bài phải BIẾN TẤU LINH HOẠT, không trùng lặp y chang nhau.
-3. ĐỊNH DẠNG NỘI DUNG:
-   - BẮT BUỘC CHIA THÀNH NHIỀU ĐOẠN KHÁC NHAU, GIỮA CÁC ĐOẠN CÁCH NHAU 1 DÒNG TRỐNG (dùng ký tự \\n\\n). TUYỆT ĐỐI KHÔNG ĐƯỢC VIẾT DỒN THÀNH 1 ĐOẠN VĂN DUY NHẤT.
-   - BẮT BUỘC SỬ DỤNG DẤU GẠCH ĐẦU DÒNG (-) cho phần thông số chi tiết (Diện tích, Kích thước, Mặt tiền, Ngõ/Đường...) và các hướng khai thác/tiềm năng.
-   - Viết ngắn gọn, súc tích, đi thẳng vào thông số giá trị thật. TUYỆT ĐỐI KHÔNG BỊA CHUYỆN, không nhắc tên người lạ, không có 'Phần 1, Phần 2', không có icon/emoji.
-   - Cuối bài gắn chính xác khối thông tin liên hệ như trên.
-
-Trả về JSON object với key "posts":
-{
-  "posts": [
-    {
-      "variant_index": 1,
-      "style": "Tên góc tiếp cận chuyên gia",
-      "title": "Tiêu đề đầy đủ thông tin nhưng được biến tấu riêng",
-      "content": "Nội dung bài viết chia nhiều đoạn rõ ràng, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ"
-    }
-  ]
-}`
-
-    const response = await fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 4096,
-        temperature: 0.85,
-        response_format: { type: 'json_object' },
-      }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      throw new Error(`Groq API error: ${response.status} — ${errText}`)
+    for (const size of batchSizes) {
+      const batchVariants = await generateBatch(
+        size,
+        currentStartIndex,
+        title,
+        description,
+        contactText,
+        apiKey
+      )
+      allVariants = [...allVariants, ...batchVariants]
+      currentStartIndex += size
     }
 
-    const groqData = await response.json()
-    const rawText = groqData.choices?.[0]?.message?.content ?? '{"posts":[]}'
+    // Top-up fallback if AI returned fewer variants
+    if (allVariants.length < num_variants) {
+      const missingCount = num_variants - allVariants.length
+      try {
+        const topUpVariants = await generateBatch(
+          missingCount,
+          allVariants.length,
+          title,
+          description,
+          contactText,
+          apiKey
+        )
+        allVariants = [...allVariants, ...topUpVariants]
+      } catch (err) {
+        console.warn('Top-up batch failed:', err)
+      }
+    }
 
-    const parsed = JSON.parse(rawText)
-    const rawVariants = Array.isArray(parsed) ? parsed : (parsed.posts ?? parsed.variants ?? [])
-    const variants = rawVariants.map((item: any, idx: number) => cleanGeneratedPost(item, idx))
+    allVariants = allVariants.map((v, i) => ({
+      ...v,
+      variant_index: i + 1,
+    }))
 
-    return new Response(JSON.stringify(variants), {
+    return new Response(JSON.stringify(allVariants.slice(0, num_variants)), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err) {

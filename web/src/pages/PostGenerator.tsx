@@ -16,7 +16,7 @@ import { useProperties, useUploadPropertyImage } from '@/hooks/useProperties'
 import { useBatchCreateSchedules } from '@/hooks/useSchedules'
 import { useSettings } from '@/hooks/useSettings'
 import { supabase } from '@/lib/supabase'
-import { DEFAULT_GOLDEN_HOURS, getDefaultDateRange } from '@/lib/scheduler'
+import { DEFAULT_GOLDEN_HOURS, getDefaultDateRange, generateScheduleSlots } from '@/lib/scheduler'
 import { randomPick } from '@/lib/utils'
 import { generatePostsWithGroq, type PostVariant } from '@/lib/groq'
 import { ImageUploader } from '@/components/ui/image-uploader'
@@ -32,6 +32,7 @@ const formSchema = z.object({
   description: z.string().min(20, 'Mô tả tối thiểu 20 ký tự'),
   numVariants: z.number().min(1).max(20),
   numDays: z.number().min(1).max(30),
+  startPreference: z.enum(['auto', 'tomorrow', 'today']).default('auto'),
   groupUrls: z.array(z.string()).min(1, 'Cần ít nhất 1 nhóm Facebook'),
 })
 
@@ -41,6 +42,7 @@ type FormValues = {
   description: string
   numVariants: number
   numDays: number
+  startPreference?: 'auto' | 'tomorrow' | 'today'
   groupUrls: string[]
 }
 
@@ -89,6 +91,7 @@ export function PostGenerator() {
       description: '',
       numVariants: 10,
       numDays: 3,
+      startPreference: 'auto',
       groupUrls: [],
     },
   })
@@ -189,24 +192,23 @@ export function PostGenerator() {
         variants = await response.json()
       }
 
-      // Build schedule dates
-      const { startDate } = getDefaultDateRange(data.numDays)
-      const goldenHours = DEFAULT_GOLDEN_HOURS
+      // Generate intelligent, strictly future-only schedule slots distributed across numDays
+      const scheduleSlots = generateScheduleSlots({
+        numPosts: variants.length,
+        numDays: data.numDays,
+        startPreference: data.startPreference ?? 'auto',
+      })
 
       // Assign scheduled times to cards
       const cards: VariantCard[] = variants.map((v, i) => {
-        const dayOffset = Math.floor(i / goldenHours.length)
-        const slotIdx = i % goldenHours.length
-        const date = addDays(startDate, dayOffset)
-        const { hour, minute } = goldenHours[slotIdx]
-        date.setHours(hour, minute, 0, 0)
+        const slotDate = scheduleSlots[i] || addDays(new Date(), Math.floor(i / 4) + 1)
         return {
           variant_index: v.variant_index ?? i + 1,
           style: v.style ?? 'Phong cách BĐS',
           title: v.title,
           content: v.content,
           selectedImages: randomPick(images, Math.min(3, images.length)),
-          scheduledAt: date.toISOString(),
+          scheduledAt: slotDate.toISOString(),
           groupUrl: data.groupUrls[i % data.groupUrls.length],
         }
       })
@@ -415,6 +417,22 @@ export function PostGenerator() {
                     </Badge>
                   ))}
                 </div>
+              </div>
+
+              {/* Start Time Preference */}
+              <div>
+                <Label>Thời điểm bắt đầu đăng</Label>
+                <select
+                  {...register('startPreference')}
+                  className="w-full mt-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="auto">⚡ Tự động (Khung giờ tới tiếp theo, không bao giờ đặt giờ quá khứ)</option>
+                  <option value="tomorrow">🌅 Bắt đầu từ sáng mai (07:00)</option>
+                  <option value="today">🕒 Bắt đầu từ hôm nay (chỉ nhận giờ chưa qua)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  🛡️ Hệ thống tự động lọc bỏ các khung giờ sáng/trưa đã trôi qua trong ngày hôm nay.
+                </p>
               </div>
 
               <div className="bg-emerald-50/70 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-800 space-y-1">

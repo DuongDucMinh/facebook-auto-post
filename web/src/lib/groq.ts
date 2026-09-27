@@ -143,20 +143,44 @@ function cleanGeneratedPost(post: any, index: number): PostVariant {
   }
 }
 
-export async function generatePostsWithGroq(options: GenerateOptions): Promise<PostVariant[]> {
-  const apiKey = options.apiKey || (import.meta as any).env?.VITE_GROQ_API_KEY
-  if (!apiKey) {
-    throw new Error('Chưa cấu hình GROQ_API_KEY. Vui lòng thêm VITE_GROQ_API_KEY vào .env.local hoặc nhập trong Cài đặt.')
+const ALL_EXPERT_STYLES = [
+  'Chuyên gia / Tổng quan giá trị',
+  'Chuyên gia / Dòng tiền & Tiềm năng',
+  'Chuyên gia / Vị trí & An sinh',
+  'Chuyên gia / Đánh giá thực tế',
+  'Chuyên gia / Điểm nhấn độc bản',
+  'Chuyên gia / Tiềm năng hạ tầng & Quy hoạch',
+  'Chuyên gia / Phân tích suất đầu tư & Thanh khoản',
+  'Chuyên gia / So sánh lợi thế phân khúc',
+  'Chuyên gia / Cơ hội an cư bền vững',
+  'Chuyên gia / Đòn bẩy tài chính & Giữ vốn',
+  'Chuyên gia / Kết nối giao thông & Tiện ích sống',
+  'Chuyên gia / Phân tích giá trị thặng dư',
+]
+
+function getBatchSizes(total: number, maxBatchSize = 5): number[] {
+  if (total <= maxBatchSize) return [total]
+  const numBatches = Math.ceil(total / maxBatchSize)
+  const baseSize = Math.floor(total / numBatches)
+  const remainder = total % numBatches
+  const batches: number[] = []
+  for (let i = 0; i < numBatches; i++) {
+    batches.push(baseSize + (i < remainder ? 1 : 0))
   }
+  return batches
+}
 
-  const systemPrompt = (options.customSystemPrompt && options.customSystemPrompt.trim().length > 20)
-    ? options.customSystemPrompt
-    : SYSTEM_PROMPT_BDS
-
-  const hasPhone2 = Boolean(options.agentPhone2 && options.agentPhone2.trim().length > 0)
-  const contactText = hasPhone2
-    ? `Liên hệ ngay Em ${options.agentName}\nSĐT 1: ${options.agentPhone}\nSĐT 2: ${options.agentPhone2?.trim()}`
-    : `Liên hệ ngay Em ${options.agentName}\nSĐT: ${options.agentPhone}`
+async function generateBatch(
+  batchSize: number,
+  startIndex: number,
+  options: GenerateOptions,
+  systemPrompt: string,
+  contactText: string,
+  apiKey: string
+): Promise<PostVariant[]> {
+  const batchStyles = Array.from({ length: batchSize }, (_, i) => {
+    return ALL_EXPERT_STYLES[(startIndex + i) % ALL_EXPERT_STYLES.length]
+  })
 
   const userPrompt = `Thông tin căn bất động sản:
 - Tiêu đề gốc: ${options.title}
@@ -165,13 +189,8 @@ export async function generatePostsWithGroq(options: GenerateOptions): Promise<P
 ${contactText}
 
 YÊU CẦU ĐẶC BIỆT:
-1. Hãy tạo đúng ${options.numVariants} bài viết biến thể khác nhau theo phong cách CHUYÊN GIA / THỰC TẾ, xoay vòng các góc tiếp cận:
-   - Biến thể 1: Chuyên gia / Tổng quan giá trị
-   - Biến thể 2: Chuyên gia / Dòng tiền & Tiềm năng
-   - Biến thể 3: Chuyên gia / Vị trí & An sinh
-   - Biến thể 4: Chuyên gia / Đánh giá thực tế
-   - Biến thể 5: Chuyên gia / Điểm nhấn độc bản
-   (Nếu cần nhiều hơn 5 bài, lặp lại chu kỳ nhưng nội dung và góc nhìn phân tích vẫn phải được làm mới).
+1. Hãy tạo đúng chính xác ${batchSize} bài viết biến thể khác nhau (từ biến thể #${startIndex + 1} đến #${startIndex + batchSize}) theo phong cách CHUYÊN GIA / THỰC TẾ, các góc tiếp cận:
+${batchStyles.map((st, idx) => `   - Biến thể ${startIndex + idx + 1}: ${st}`).join('\n')}
 
 2. YÊU CẦU TIÊU ĐỀ ("title"):
    - Mỗi tiêu đề PHẢI ĐẦY ĐỦ THÔNG TIN: (1) Loại hình + Khu vực, (2) Điểm mạnh nổi bật, (3) Giá trị/Công năng, (4) Mức giá mờ.
@@ -204,12 +223,12 @@ ${contactText}
    - Tuyệt đối KHÔNG có icon/emoji.
    - Cuối bài gắn chính xác khối thông tin liên hệ như trên.
 
-Trả về duy nhất định dạng JSON thuần túy (JSON object có key "posts" là mảng):
+Trả về duy nhất định dạng JSON thuần túy (JSON object có key "posts" là mảng gồm đúng ${batchSize} phần tử):
 {
   "posts": [
     {
-      "variant_index": 1,
-      "style": "Tên góc tiếp cận chuyên gia",
+      "variant_index": ${startIndex + 1},
+      "style": "${batchStyles[0] || 'Chuyên gia / Tổng quan giá trị'}",
       "title": "Tiêu đề đầy đủ thông tin nhưng được biến tấu riêng",
       "content": "Nội dung bài viết chia nhiều đoạn rõ ràng, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ"
     }
@@ -228,7 +247,6 @@ Trả về duy nhất định dạng JSON thuần túy (JSON object có key "pos
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      // Limit token usage to respect 8K TPM
       max_tokens: 4096,
       temperature: 0.85,
       response_format: { type: 'json_object' },
@@ -261,12 +279,61 @@ Trả về duy nhất định dạng JSON thuần túy (JSON object có key "pos
     }
 
     if (rawList.length > 0) {
-      return rawList.map((item, idx) => cleanGeneratedPost(item, idx))
+      return rawList.map((item, idx) => cleanGeneratedPost(item, startIndex + idx))
     }
-
     throw new Error('Dữ liệu JSON không đúng cấu trúc mảng bài viết')
   } catch (err) {
     console.error('Lỗi parse JSON từ Groq:', content, err)
     throw new Error('Không thể phân tích kết quả JSON từ Groq')
   }
+}
+
+export async function generatePostsWithGroq(options: GenerateOptions): Promise<PostVariant[]> {
+  const apiKey = options.apiKey || (import.meta as any).env?.VITE_GROQ_API_KEY
+  if (!apiKey) {
+    throw new Error('Chưa cấu hình GROQ_API_KEY. Vui lòng thêm VITE_GROQ_API_KEY vào .env.local hoặc nhập trong Cài đặt.')
+  }
+
+  const systemPrompt = (options.customSystemPrompt && options.customSystemPrompt.trim().length > 20)
+    ? options.customSystemPrompt
+    : SYSTEM_PROMPT_BDS
+
+  const hasPhone2 = Boolean(options.agentPhone2 && options.agentPhone2.trim().length > 0)
+  const contactText = hasPhone2
+    ? `Liên hệ ngay Em ${options.agentName}\nSĐT 1: ${options.agentPhone}\nSĐT 2: ${options.agentPhone2?.trim()}`
+    : `Liên hệ ngay Em ${options.agentName}\nSĐT: ${options.agentPhone}`
+
+  // Chia nhỏ thành các batch (tối đa 5 bài/lần) để đảm bảo không bị chạm giới hạn max_tokens (4096)
+  const batchSizes = getBatchSizes(options.numVariants, 5)
+  const allVariants: PostVariant[] = []
+
+  let currentIndex = 0
+  for (let b = 0; b < batchSizes.length; b++) {
+    const size = batchSizes[b]
+    if (b > 0) {
+      // Delay nhỏ giữa các batch để tuân thủ Groq Rate Limits
+      await new Promise((resolve) => setTimeout(resolve, 350))
+    }
+    const batchResults = await generateBatch(size, currentIndex, options, systemPrompt, contactText, apiKey)
+    allVariants.push(...batchResults)
+    currentIndex += batchResults.length
+  }
+
+  // Cơ chế an toàn: Nếu AI trả về thiếu bài so với numVariants, gọi bổ sung đúng số lượng còn thiếu
+  if (allVariants.length < options.numVariants) {
+    const missing = options.numVariants - allVariants.length
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const topup = await generateBatch(missing, allVariants.length, options, systemPrompt, contactText, apiKey)
+      allVariants.push(...topup)
+    } catch (e) {
+      console.warn('Lỗi khi sinh bù bài viết:', e)
+    }
+  }
+
+  // Đảm bảo trả về đúng số bài và đánh số variant_index chính xác từ 1 đến N
+  return allVariants.slice(0, options.numVariants).map((item, idx) => ({
+    ...item,
+    variant_index: idx + 1,
+  }))
 }
