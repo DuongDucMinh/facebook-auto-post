@@ -31,14 +31,18 @@ facebook-auto-post/
 - **Frontend**: React 18 + Vite + TypeScript + Tailwind CSS v4 + Radix UI + Lucide Icons + Recharts
 - **State Management**: TanStack Query v5 + Zustand
 - **Backend / Database**: Supabase (PostgreSQL, Auth, Storage, Realtime, Edge Functions)
-- **AI Engine**: **Groq API**
-  - Model: `openai/gpt-oss-120b`
+- **AI Engine**: **Groq API** (Tự động luân chuyển model chống Rate Limit & quá tải)
+  - **Model chính**: `openai/gpt-oss-120b` (chất lượng nội dung BĐS chuyên sâu)
+  - **Models dự phòng luân chuyển**:
+    1. `openai/gpt-oss-20b` (tốc độ cao, kích hoạt ngay khi 120b chạm limit)
+    2. `openai/gpt-oss-safeguard-20b` (tối ưu an toàn nội dung, chống vi phạm chính sách)
+    3. `qwen/qwen3.8-27b` (lập luận mạnh mẽ, dự phòng cuối chống gián đoạn)
   - Giới hạn:
     - **RPM**: 30 requests/phút
     - **RPD**: 1,000 requests/ngày
     - **TPM**: 8,000 tokens/phút
     - **TPD**: 200,000 tokens/ngày
-  - Tối ưu hóa: Prompt tinh gọn, format JSON, giới hạn max_tokens (4096) đảm bảo không bao giờ vượt 8K TPM.
+  - Tối ưu hóa: Prompt tinh gọn, format JSON, cơ chế xoay vòng model tự động khi gặp lỗi 429 hoặc 503.
 - **Chrome Extension**: Manifest V3 (hỗ trợ cả 2 chế độ: Mở Tab trực quan hoặc Chạy nền ngầm).
 
 ---
@@ -102,7 +106,7 @@ Mở trình duyệt tại [http://localhost:5173](http://localhost:5173). Đăng
 
 ## Tính năng chi tiết
 
-### 1. 🤖 AI Sinh bài viết (Groq `openai/gpt-oss-120b`)
+### 1. 🤖 AI Sinh bài viết (Groq `openai/gpt-oss-120b` + Tự động luân chuyển dự phòng)
 - Sinh từ 1 đến 20 bài viết chất lượng cao từ mô tả thô của căn nhà.
 - **Quy tắc 3 "TH"**:
   - **THẬT**: Câu từ đời thường, tự nhiên, chân thật.

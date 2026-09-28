@@ -18,7 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings'
 import { supabase } from '@/lib/supabase'
-import { SYSTEM_PROMPT_BDS, GROQ_MODEL } from '@/lib/groq'
+import { SYSTEM_PROMPT_BDS } from '@/lib/groq'
 import { cn } from '@/lib/utils'
 
 export function SettingsPage() {
@@ -168,7 +168,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Cài đặt hệ thống</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Tùy chỉnh thông tin môi giới, AI Copywriting Prompt, kết nối Groq & Chrome Extension
+          Tùy chỉnh thông tin môi giới, AI Copywriting Prompt, kết nối Chrome Extension & tài khoản
         </p>
       </div>
 
@@ -250,7 +250,7 @@ export function SettingsPage() {
               />
               <div className="flex items-center justify-between pt-1">
                 <span className="text-xs text-slate-500">
-                  * Prompt này sẽ được gửi trực tiếp tới model <code>{GROQ_MODEL}</code> khi bạn bấm "Sinh bài viết".
+                  * System Prompt này sẽ định hình văn phong chuyên gia và cấu trúc bài viết của AI.
                 </span>
                 <Button onClick={handleSavePrompt} disabled={updateSettings.isPending}>
                   {updateSettings.isPending ? 'Đang lưu...' : 'Lưu Prompt Tùy Chỉnh'}

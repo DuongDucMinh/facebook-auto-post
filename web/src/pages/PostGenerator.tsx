@@ -1,27 +1,44 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Sparkles, RefreshCw, CalendarDays, X, Image as ImageIcon, Plus, CheckSquare, Eye } from 'lucide-react'
+import {
+  Sparkles,
+  RefreshCw,
+  CalendarDays,
+  X,
+  Plus,
+  CheckSquare,
+  Eye,
+  Building2,
+  Check,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
-import { addDays } from 'date-fns'
+import { addDays, format } from 'date-fns'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useProperties, useUploadPropertyImage } from '@/hooks/useProperties'
+import {
+  useProperties,
+  useUploadPropertyImage,
+  useSavedPosts,
+  useDeleteSavedPost,
+  useSaveGeneratedPosts,
+} from '@/hooks/useProperties'
 import { useBatchCreateSchedules } from '@/hooks/useSchedules'
 import { useSettings } from '@/hooks/useSettings'
 import { supabase } from '@/lib/supabase'
-import { DEFAULT_GOLDEN_HOURS, getDefaultDateRange, generateScheduleSlots } from '@/lib/scheduler'
+import { DEFAULT_GOLDEN_HOURS, generateScheduleSlots } from '@/lib/scheduler'
 import { randomPick } from '@/lib/utils'
 import { generatePostsWithGroq, type PostVariant } from '@/lib/groq'
 import { markdownToFacebookHtml } from '@/lib/formatter'
 import { ImageUploader } from '@/components/ui/image-uploader'
-import type { Property } from '@/types/database'
+import type { Property, GeneratedPost } from '@/types/database'
 
 function fmtHour(h: number, m: number) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
@@ -48,6 +65,7 @@ type FormValues = {
 }
 
 interface VariantCard {
+  savedPostId?: string
   variant_index: number
   style: string
   title: string
@@ -86,6 +104,68 @@ export function PostGenerator() {
   const [activeTab, setActiveTab] = useState<'new' | 'saved'>('new')
   const [previewModes, setPreviewModes] = useState<Record<number, boolean>>({})
 
+  // Specific dates selection state
+  const [scheduleMode, setScheduleMode] = useState<'auto_days' | 'specific_dates'>('auto_days')
+  const [selectedSpecificDates, setSelectedSpecificDates] = useState<string[]>([])
+  const [specificDateInput, setSpecificDateInput] = useState('')
+
+  // Form setup
+  const { register, handleSubmit, watch, getValues, setValue, control, formState: { errors } } = useForm<FormValues>({
+    resolver: zodResolver(formSchema) as any,
+    defaultValues: {
+      title: '',
+      description: '',
+      numVariants: 10,
+      numDays: 3,
+      startPreference: 'auto',
+      groupUrls: [],
+    },
+  })
+
+  const watchedPropertyId = watch('propertyId')
+  const watchedGroupUrls = watch('groupUrls') ?? []
+
+  // Saved posts data & mutations
+  const { data: savedPosts = [], isLoading: isLoadingSaved } = useSavedPosts(watchedPropertyId)
+  const deleteSavedPost = useDeleteSavedPost()
+  const saveGeneratedPosts = useSaveGeneratedPosts()
+  const [selectedSavedIds, setSelectedSavedIds] = useState<string[]>([])
+  const [savedPreviewModes, setSavedPreviewModes] = useState<Record<string, boolean>>({})
+
+  // Next 14 days quick pills
+  const next14Days = useMemo(() => {
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = addDays(new Date(), i)
+      const dateStr = format(d, 'yyyy-MM-dd')
+      const weekday = i === 0 ? 'Hôm nay' : (i === 1 ? 'Ngày mai' : ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][d.getDay()])
+      return {
+        date: d,
+        dateStr,
+        label: `${weekday} (${format(d, 'dd/MM')})`,
+      }
+    })
+  }, [])
+
+  const toggleSpecificDate = (dateStr: string) => {
+    setSelectedSpecificDates((prev) =>
+      prev.includes(dateStr)
+        ? prev.filter((d) => d !== dateStr)
+        : [...prev, dateStr].sort()
+    )
+  }
+
+  const removeSpecificDate = (dateStr: string) => {
+    setSelectedSpecificDates((prev) => prev.filter((d) => d !== dateStr))
+  }
+
+  const addPresetDates = (daysToAdd: number) => {
+    const dates: string[] = []
+    for (let i = 1; i <= daysToAdd; i++) {
+      dates.push(format(addDays(new Date(), i), 'yyyy-MM-dd'))
+    }
+    setSelectedSpecificDates((prev) => Array.from(new Set([...prev, ...dates])).sort())
+  }
+
   const applyFormat = (cardIdx: number, prefix: string, suffix: string = '') => {
     const card = variantCards[cardIdx]
     if (!card) return
@@ -102,21 +182,6 @@ export function PostGenerator() {
       textarea.setSelectionRange(start + prefix.length, start + prefix.length + selectedText.length)
     }, 50)
   }
-
-  const { register, handleSubmit, watch, setValue, control, formState: { errors } } = useForm<FormValues>({
-    resolver: zodResolver(formSchema) as any,
-    defaultValues: {
-      title: '',
-      description: '',
-      numVariants: 10,
-      numDays: 3,
-      startPreference: 'auto',
-      groupUrls: [],
-    },
-  })
-
-  const watchedPropertyId = watch('propertyId')
-  const watchedGroupUrls = watch('groupUrls') ?? []
 
   // Auto-fill when property is selected
   useEffect(() => {
@@ -211,17 +276,43 @@ export function PostGenerator() {
         variants = await response.json()
       }
 
-      // Generate intelligent, strictly future-only schedule slots distributed across numDays
+      // Generate intelligent schedule slots (using specific dates if selected, or default auto days)
       const scheduleSlots = generateScheduleSlots({
         numPosts: variants.length,
         numDays: data.numDays,
         startPreference: data.startPreference ?? 'auto',
+        specificDates: scheduleMode === 'specific_dates' && selectedSpecificDates.length > 0 ? selectedSpecificDates : undefined,
       })
+
+      // Auto-save generated posts to generated_posts as 'draft' if a property is selected
+      // so user never loses their generated posts even without scheduling immediately!
+      let savedPostIds: string[] = []
+      if (data.propertyId) {
+        try {
+          const toInsert = variants.map((v, i) => ({
+            property_id: data.propertyId!,
+            title: v.title,
+            content: v.content,
+            style: v.style ?? 'Phong cách BĐS',
+            variant_index: v.variant_index ?? i + 1,
+            selected_images: randomPick(images, Math.min(3, images.length)),
+            is_approved: true,
+            status: 'draft' as const,
+          }))
+          const savedResults = await saveGeneratedPosts.mutateAsync(toInsert)
+          if (savedResults && savedResults.length > 0) {
+            savedPostIds = savedResults.map((p) => p.id)
+          }
+        } catch (saveErr) {
+          console.warn('Không thể tự động lưu nháp:', saveErr)
+        }
+      }
 
       // Assign scheduled times to cards
       const cards: VariantCard[] = variants.map((v, i) => {
         const slotDate = scheduleSlots[i] || addDays(new Date(), Math.floor(i / 4) + 1)
         return {
+          savedPostId: savedPostIds[i],
           variant_index: v.variant_index ?? i + 1,
           style: v.style ?? 'Phong cách BĐS',
           title: v.title,
@@ -234,7 +325,7 @@ export function PostGenerator() {
 
       setVariantCards(cards)
       setActiveTab('new')
-      toast.success(`Đã sinh ${variants.length} bài viết bằng Groq (openai/gpt-oss-120b)!`)
+      toast.success(`Đã tạo thành công ${variants.length} bài viết!`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Có lỗi khi sinh bài viết')
     } finally {
@@ -250,39 +341,140 @@ export function PostGenerator() {
     updateCard(index, { selectedImages: randomPick(images, Math.min(3, images.length)) })
   }
 
+  // Reuse saved posts without consuming tokens
+  const loadSavedPostsToSchedule = (postsToLoad: GeneratedPost[]) => {
+    if (postsToLoad.length === 0) return
+    const currentGroupUrls = watchedGroupUrls.length > 0
+      ? watchedGroupUrls
+      : (properties?.find((p) => p.id === watchedPropertyId)?.group_urls ?? [])
+
+    if (currentGroupUrls.length === 0) {
+      toast.warning('Vui lòng thêm ít nhất 1 nhóm Facebook ở cột bên trái để lên lịch')
+      return
+    }
+
+    const scheduleSlots = generateScheduleSlots({
+      numPosts: postsToLoad.length,
+      numDays: getValues('numDays') || 3,
+      startPreference: getValues('startPreference') || 'auto',
+      specificDates: scheduleMode === 'specific_dates' && selectedSpecificDates.length > 0 ? selectedSpecificDates : undefined,
+    })
+
+    const newCards: VariantCard[] = postsToLoad.map((p, i) => {
+      const slotDate = scheduleSlots[i] || addDays(new Date(), Math.floor(i / 4) + 1)
+      const cardImages = p.selected_images && p.selected_images.length > 0
+        ? p.selected_images
+        : (images.length > 0 ? randomPick(images, Math.min(3, images.length)) : [])
+
+      return {
+        savedPostId: p.id,
+        variant_index: p.variant_index ?? (variantCards.length + i + 1),
+        style: p.style,
+        title: p.title,
+        content: p.content,
+        selectedImages: cardImages,
+        scheduledAt: slotDate.toISOString(),
+        groupUrl: currentGroupUrls[i % currentGroupUrls.length],
+      }
+    })
+
+    setVariantCards((prev) => [...prev, ...newCards])
+    setActiveTab('new')
+    toast.success(`Đã nạp ${postsToLoad.length} bài viết đã lưu vào danh sách đăng!`)
+  }
+
+  const handleDeleteSaved = async (postId: string) => {
+    if (!confirm('Bạn có chắc muốn xóa bài viết đã lưu này không?')) return
+    try {
+      await deleteSavedPost.mutateAsync(postId)
+      setSelectedSavedIds((prev) => prev.filter((id) => id !== postId))
+      toast.success('Đã xóa bài viết khỏi danh sách lưu')
+    } catch {
+      toast.error('Có lỗi khi xóa bài viết')
+    }
+  }
+
   const confirmAndSchedule = async () => {
     if (variantCards.length === 0) { toast.error('Chưa có bài viết nào để lên lịch'); return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { toast.error('Chưa đăng nhập'); return }
 
     const approvedCards = variantCards.filter((c) => c.groupUrl && c.scheduledAt)
+    if (approvedCards.length === 0) {
+      toast.error('Vui lòng kiểm tra lại thời gian và nhóm đăng cho các bài viết')
+      return
+    }
 
     try {
-      // 1. Save generated_posts
-      const postsToInsert = approvedCards.map((c) => ({
-        property_id: watchedPropertyId ?? 'draft',
-        title: c.title,
-        content: c.content,
-        style: c.style,
-        variant_index: c.variant_index,
-        selected_images: c.selectedImages,
-        is_approved: true,
-        status: 'scheduled' as const,
-      }))
+      // 1. Ensure propertyId exists (auto-create property if user entered manually)
+      let targetPropertyId = watchedPropertyId
+      if (!targetPropertyId) {
+        const { data: createdProp, error: propErr } = await (supabase.from('properties') as any)
+          .insert({
+            user_id: user.id,
+            title: watch('title') || 'Bất động sản',
+            raw_description: watch('description') || '',
+            images: images,
+            group_urls: watchedGroupUrls,
+          })
+          .select()
+          .single()
+        if (propErr) throw propErr
+        targetPropertyId = createdProp.id
+        setValue('propertyId', targetPropertyId)
+      }
 
-      const { data: savedPosts, error: postsErr } = await (supabase
-        .from('generated_posts') as any)
-        .insert(postsToInsert)
-        .select()
-      if (postsErr) throw postsErr
+      if (!targetPropertyId) {
+        toast.error('Không tìm thấy thông tin bất động sản')
+        return
+      }
 
-      // 2. Create schedules
-      const schedules = (savedPosts as any[]).map((post: any, i: number) => ({
+      const validPropertyId: string = targetPropertyId
+
+      // 2. Save or update generated_posts
+      const postIds: string[] = []
+
+      for (const card of approvedCards) {
+        if (card.savedPostId) {
+          // Update existing post
+          await (supabase.from('generated_posts') as any)
+            .update({
+              title: card.title,
+              content: card.content,
+              style: card.style,
+              selected_images: card.selectedImages,
+              status: 'scheduled',
+              is_approved: true,
+            })
+            .eq('id', card.savedPostId)
+          postIds.push(card.savedPostId)
+        } else {
+          // Insert new post
+          const { data: newPost, error: insertErr } = await (supabase.from('generated_posts') as any)
+            .insert({
+              property_id: validPropertyId,
+              title: card.title,
+              content: card.content,
+              style: card.style,
+              variant_index: card.variant_index,
+              selected_images: card.selectedImages,
+              is_approved: true,
+              status: 'scheduled',
+            })
+            .select()
+            .single()
+          if (insertErr) throw insertErr
+          postIds.push(newPost.id)
+        }
+      }
+
+      // 3. Create schedules
+      const schedules = approvedCards.map((card, i) => ({
         user_id: user.id,
-        post_id: post.id,
-        property_id: watchedPropertyId ?? post.property_id,
-        target_group_url: approvedCards[i].groupUrl,
-        scheduled_at: approvedCards[i].scheduledAt,
+        post_id: postIds[i],
+        property_id: validPropertyId,
+        target_group_url: card.groupUrl,
+        scheduled_at: card.scheduledAt,
         status: 'pending' as const,
       }))
 
@@ -299,13 +491,13 @@ export function PostGenerator() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Tạo bài đăng</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Sinh bài viết marketing BĐS bằng Groq AI (<code>openai/gpt-oss-120b</code>) và lên lịch xoay vòng chống spam
+          Tự động tạo nội dung bài viết marketing BĐS bằng AI và lên lịch đăng bài tối ưu
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
         {/* ===== LEFT COLUMN: SETUP ===== */}
-        <div className="space-y-4">
+        <div className="space-y-4 flex flex-col">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Thông tin bất động sản</CardTitle>
@@ -389,42 +581,222 @@ export function PostGenerator() {
               <CardTitle className="text-base">Thông số lên lịch & Model AI</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Số bài cần sinh</Label>
-                  <Controller
-                    name="numVariants"
-                    control={control}
-                    render={({ field }) => (
-                      <Input
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={field.value}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
-                        className="mt-1"
-                      />
-                    )}
-                  />
-                </div>
-                <div>
-                  <Label>Số ngày đăng</Label>
-                  <Controller
-                    name="numDays"
-                    control={control}
-                    render={({ field }) => (
-                      <Input
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={field.value}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
-                        className="mt-1"
-                      />
-                    )}
-                  />
+              {/* Number of variants */}
+              <div>
+                <Label>Số bài cần sinh</Label>
+                <Controller
+                  name="numVariants"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={field.value}
+                      onChange={(e) => field.onChange(Number(e.target.value))}
+                      className="mt-1"
+                    />
+                  )}
+                />
+              </div>
+
+              {/* Schedule Mode Selector */}
+              <div>
+                <Label className="font-medium text-xs text-slate-700">Chế độ chọn ngày đăng</Label>
+                <div className="grid grid-cols-2 gap-2 mt-1.5 p-1 bg-slate-100 rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleMode('auto_days')}
+                    className={`py-1.5 px-3 rounded-md text-xs font-medium transition-all ${
+                      scheduleMode === 'auto_days'
+                        ? 'bg-white shadow text-slate-900 font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🔄 Số ngày liên tiếp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleMode('specific_dates')}
+                    className={`py-1.5 px-3 rounded-md text-xs font-medium transition-all ${
+                      scheduleMode === 'specific_dates'
+                        ? 'bg-white shadow text-slate-900 font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📅 Chọn ngày cụ thể
+                  </button>
                 </div>
               </div>
+
+              {/* Mode A: Continuous Days (Default) */}
+              {scheduleMode === 'auto_days' && (
+                <div className="space-y-4 border border-slate-200/70 rounded-lg p-3 bg-slate-50/50">
+                  <div>
+                    <Label className="text-xs">Số ngày đăng liên tiếp</Label>
+                    <Controller
+                      name="numDays"
+                      control={control}
+                      render={({ field }) => (
+                        <Input
+                          type="number"
+                          min={1}
+                          max={30}
+                          value={field.value}
+                          onChange={(e) => field.onChange(Number(e.target.value))}
+                          className="mt-1 bg-white"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-xs">Thời điểm bắt đầu đăng</Label>
+                    <select
+                      {...register('startPreference')}
+                      className="w-full mt-1 rounded-md border border-input bg-white px-3 py-2 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="auto">⚡ Tự động (Khung giờ tới tiếp theo, không bao giờ đặt giờ quá khứ)</option>
+                      <option value="tomorrow">🌅 Bắt đầu từ sáng mai (07:00)</option>
+                      <option value="today">🕒 Bắt đầu từ hôm nay (chỉ nhận giờ chưa qua)</option>
+                    </select>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      🛡️ Tự động lọc bỏ các khung giờ đã trôi qua trong ngày hôm nay.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Mode B: Specific Dates Selection */}
+              {scheduleMode === 'specific_dates' && (
+                <div className="space-y-3.5 border border-emerald-200 bg-emerald-50/30 rounded-lg p-3.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold text-slate-800">Chọn các ngày đăng cụ thể</Label>
+                    {selectedSpecificDates.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSpecificDates([])}
+                        className="text-[11px] text-red-500 hover:underline"
+                      >
+                        Xóa tất cả ({selectedSpecificDates.length} ngày)
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Date Input + Add Button */}
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      min={format(new Date(), 'yyyy-MM-dd')}
+                      value={specificDateInput}
+                      onChange={(e) => setSpecificDateInput(e.target.value)}
+                      className="text-xs bg-white h-8"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs shrink-0 bg-white hover:bg-slate-50"
+                      onClick={() => {
+                        if (!specificDateInput) return
+                        if (selectedSpecificDates.includes(specificDateInput)) {
+                          toast.info('Ngày này đã có trong danh sách')
+                          return
+                        }
+                        setSelectedSpecificDates((prev) => [...prev, specificDateInput].sort())
+                        setSpecificDateInput('')
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Thêm ngày
+                    </Button>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap gap-1.5 text-xs">
+                    <span className="text-[11px] text-slate-500 self-center mr-1">Thêm nhanh:</span>
+                    <button
+                      type="button"
+                      onClick={() => addPresetDates(2)}
+                      className="px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-100 text-[11px] text-slate-700"
+                    >
+                      + 2 ngày tới
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addPresetDates(3)}
+                      className="px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-100 text-[11px] text-slate-700"
+                    >
+                      + 3 ngày tới
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addPresetDates(5)}
+                      className="px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-100 text-[11px] text-slate-700"
+                    >
+                      + 5 ngày tới
+                    </button>
+                  </div>
+
+                  {/* 14 Days Pills */}
+                  <div>
+                    <p className="text-[11px] text-slate-600 mb-1.5">Nhấp vào ngày để bật/tắt đăng:</p>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                      {next14Days.map((d) => {
+                        const isSelected = selectedSpecificDates.includes(d.dateStr)
+                        return (
+                          <button
+                            key={d.dateStr}
+                            type="button"
+                            onClick={() => toggleSpecificDate(d.dateStr)}
+                            className={`text-xs px-2 py-1 rounded-md border transition-all flex items-center gap-1 ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 font-medium shadow-xs'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3 h-3" />}
+                            <span>{d.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Selected Dates Badges */}
+                  {selectedSpecificDates.length > 0 ? (
+                    <div className="pt-1 border-t border-emerald-200/60">
+                      <p className="text-[11px] font-medium text-slate-700 mb-1.5">
+                        Đã chọn {selectedSpecificDates.length} ngày đăng ({selectedSpecificDates.length * 4} lượt giờ vàng):
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedSpecificDates.map((dateStr) => {
+                          const [y, m, day] = dateStr.split('-')
+                          return (
+                            <span
+                              key={dateStr}
+                              className="inline-flex items-center gap-1 bg-white text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-xs font-medium shadow-2xs"
+                            >
+                              <CalendarDays className="w-3 h-3 text-emerald-600" />
+                              {`${day}/${m}/${y}`}
+                              <button
+                                type="button"
+                                onClick={() => removeSpecificDate(dateStr)}
+                                className="hover:text-red-500 ml-0.5 cursor-pointer"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
+                      💡 Chưa chọn ngày cụ thể nào. Nếu để trống, hệ thống sẽ tự động đăng theo số ngày liên tiếp như mặc định.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Golden Hours Display */}
               <div>
@@ -438,28 +810,11 @@ export function PostGenerator() {
                 </div>
               </div>
 
-              {/* Start Time Preference */}
-              <div>
-                <Label>Thời điểm bắt đầu đăng</Label>
-                <select
-                  {...register('startPreference')}
-                  className="w-full mt-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="auto">⚡ Tự động (Khung giờ tới tiếp theo, không bao giờ đặt giờ quá khứ)</option>
-                  <option value="tomorrow">🌅 Bắt đầu từ sáng mai (07:00)</option>
-                  <option value="today">🕒 Bắt đầu từ hôm nay (chỉ nhận giờ chưa qua)</option>
-                </select>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  🛡️ Hệ thống tự động lọc bỏ các khung giờ sáng/trưa đã trôi qua trong ngày hôm nay.
-                </p>
-              </div>
-
               <div className="bg-emerald-50/70 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-800 space-y-1">
                 <p className="font-semibold flex items-center gap-1">
-                  ⚡ AI Model: openai/gpt-oss-120b (Groq)
+                  ⚡ Tiêu chuẩn bài viết BĐS chuyên nghiệp
                 </p>
-                <p>Tuân thủ: 3 "TH" (Thật - Thơm - Thiếu), Không icon, Không từ cấm FB, 5 phong cách xoay vòng.</p>
-                <p className="text-emerald-700/80">Rate Limits: 30 req/phút • 8K token/phút • Phân phối an toàn chống Meta spam.</p>
+                <p>Văn phong chuyên gia thực tế, tuân thủ nguyên tắc 3 "TH" (Thật - Thơm - Thiếu), không icon, tránh từ cấm Facebook.</p>
               </div>
 
               <Button
@@ -471,12 +826,12 @@ export function PostGenerator() {
                 {isGenerating ? (
                   <>
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Đang sinh bài viết bằng Groq...
+                    Đang tạo bài viết bằng AI...
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    Sinh bài viết bằng AI
+                    Tạo bài viết bằng AI
                   </>
                 )}
               </Button>
@@ -485,43 +840,55 @@ export function PostGenerator() {
         </div>
 
         {/* ===== RIGHT COLUMN: RESULTS ===== */}
-        <div className="space-y-4">
+        <div className="space-y-4 flex flex-col h-full">
           {/* Tab Switcher */}
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             <button
               type="button"
               onClick={() => setActiveTab('new')}
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'new' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+              className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                activeTab === 'new' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
+              }`}
             >
               Bài viết mới sinh ({variantCards.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('saved')}
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'saved' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
+              className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                activeTab === 'saved' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
+              }`}
             >
-              Bài viết đã lưu
+              Bài viết đã lưu {savedPosts.length > 0 ? `(${savedPosts.length})` : ''}
             </button>
           </div>
 
+          {/* TAB 1: NEW POSTS */}
           {activeTab === 'new' && (
-            <>
+            <div className="flex-1 flex flex-col">
               {variantCards.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center border-2 border-dashed border-slate-200 rounded-xl">
+                <div className="flex-1 min-h-[500px] flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
                   <Sparkles className="w-10 h-10 text-slate-300 mb-3" />
-                  <p className="font-medium text-slate-500">Chưa có bài viết nào</p>
-                  <p className="text-sm text-slate-400 mt-1">Điền thông tin bên trái và bấm "Sinh bài viết bằng AI"</p>
+                  <p className="font-semibold text-slate-600">Chưa có bài viết nào</p>
+                  <p className="text-sm text-slate-400 mt-1 max-w-sm">
+                    Điền thông tin bên trái và bấm "Tạo bài viết bằng AI" hoặc chọn các bài viết đã lưu từ tab bên cạnh để tiết kiệm token.
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
+                <div className="space-y-4 flex-1">
                   {variantCards.map((card, idx) => (
-                    <Card key={idx}>
+                    <Card key={idx} className="border-slate-200 shadow-xs">
                       <CardContent className="pt-4 space-y-3">
                         {/* Style Badge */}
                         <div className="flex items-center justify-between">
                           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STYLE_COLORS[card.style] ?? 'bg-slate-100 text-slate-600'}`}>
                             #{card.variant_index} — {card.style}
                           </span>
+                          {card.savedPostId && (
+                            <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50">
+                              Đã lưu trong database
+                            </Badge>
+                          )}
                         </div>
 
                         {/* Title */}
@@ -611,14 +978,14 @@ export function PostGenerator() {
                           )}
                         </div>
 
-                        {/* 3 Selected Images */}
+                        {/* Selected Images */}
                         <div>
                           <div className="flex items-center justify-between mb-1">
                             <Label className="text-xs">Ảnh chọn ngẫu nhiên (3/{images.length})</Label>
                             <button
                               type="button"
                               onClick={() => refreshCardImages(idx)}
-                              className="text-xs text-emerald-600 hover:underline flex items-center gap-1"
+                              className="text-xs text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer"
                             >
                               <RefreshCw className="w-3 h-3" /> Đổi 3 ảnh khác
                             </button>
@@ -667,26 +1034,217 @@ export function PostGenerator() {
                   ))}
                 </div>
               )}
-            </>
+            </div>
           )}
 
+          {/* TAB 2: SAVED POSTS (REUSE FROM DATABASE) */}
           {activeTab === 'saved' && (
-            <div className="flex flex-col items-center justify-center py-20 text-center border-2 border-dashed border-slate-200 rounded-xl">
-              <CalendarDays className="w-10 h-10 text-slate-300 mb-3" />
-              <p className="font-medium text-slate-500">Bài viết đã lưu</p>
-              <p className="text-sm text-slate-400 mt-1">Chọn BĐS để xem các bài viết đã sinh trước đó</p>
+            <div className="flex-1 flex flex-col">
+              {!watchedPropertyId ? (
+                <div className="flex-1 min-h-[500px] flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+                  <Building2 className="w-12 h-12 text-slate-300 mb-3" />
+                  <p className="font-semibold text-slate-700">Chưa chọn bất động sản</p>
+                  <p className="text-sm text-slate-400 mt-1 max-w-sm">
+                    Vui lòng chọn 1 bất động sản ở cột bên trái để tải và tái sử dụng các bài viết đã từng sinh trước đó trong database.
+                  </p>
+                </div>
+              ) : isLoadingSaved ? (
+                <div className="flex-1 min-h-[500px] flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+                  <RefreshCw className="w-8 h-8 text-emerald-600 animate-spin mb-3" />
+                  <p className="font-medium text-slate-600">Đang tải các bài viết đã lưu từ database...</p>
+                </div>
+              ) : savedPosts.length === 0 ? (
+                <div className="flex-1 min-h-[500px] flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+                  <CalendarDays className="w-12 h-12 text-slate-300 mb-3" />
+                  <p className="font-semibold text-slate-700">Chưa có bài viết đã lưu cho BĐS này</p>
+                  <p className="text-sm text-slate-400 mt-1 max-w-sm">
+                    Khi bạn sinh bài viết bằng AI cho BĐS này, các bài viết sẽ tự động được lưu lại tại đây để bạn có thể tái sử dụng bất cứ lúc nào mà không tốn thêm token AI.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4 flex-1">
+                  {/* Action Bar for Saved Posts */}
+                  <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-xs flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="select-all-saved"
+                        checked={selectedSavedIds.length === savedPosts.length && savedPosts.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedSavedIds(savedPosts.map((p) => p.id))
+                          } else {
+                            setSelectedSavedIds([])
+                          }
+                        }}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                      />
+                      <Label htmlFor="select-all-saved" className="text-xs font-medium cursor-pointer">
+                        Chọn tất cả ({savedPosts.length} bài)
+                      </Label>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {selectedSavedIds.length > 0 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const selected = savedPosts.filter((p) => selectedSavedIds.includes(p.id))
+                            loadSavedPostsToSchedule(selected)
+                          }}
+                          className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white h-8"
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1" />
+                          Nạp {selectedSavedIds.length} bài đã chọn vào lịch
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => loadSavedPostsToSchedule(savedPosts)}
+                        className="text-xs h-8"
+                      >
+                        <CalendarDays className="w-3.5 h-3.5 mr-1" />
+                        Nạp toàn bộ {savedPosts.length} bài
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Saved Posts List */}
+                  {savedPosts.map((post) => (
+                    <Card key={post.id} className="border-slate-200 shadow-xs hover:border-slate-300 transition-all">
+                      <CardContent className="pt-4 space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedSavedIds.includes(post.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedSavedIds((prev) => [...prev, post.id])
+                                } else {
+                                  setSelectedSavedIds((prev) => prev.filter((id) => id !== post.id))
+                                }
+                              }}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                            />
+                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STYLE_COLORS[post.style] ?? 'bg-slate-100 text-slate-600'}`}>
+                              #{post.variant_index} — {post.style}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${
+                                post.status === 'scheduled'
+                                  ? 'border-blue-200 text-blue-700 bg-blue-50'
+                                  : (post.status === 'approved'
+                                    ? 'border-emerald-200 text-emerald-700 bg-emerald-50'
+                                    : 'border-slate-200 text-slate-600')
+                              }`}
+                            >
+                              {post.status === 'scheduled' ? 'Đã lên lịch' : (post.status === 'approved' ? 'Đã duyệt' : 'Bản nháp')}
+                            </Badge>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <span>{post.created_at ? format(new Date(post.created_at), 'dd/MM/yyyy HH:mm') : ''}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSaved(post.id)}
+                              className="text-slate-400 hover:text-red-500 p-1 transition-colors cursor-pointer"
+                              title="Xóa bài viết này khỏi kho lưu trữ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Title */}
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-800">{post.title}</h4>
+                        </div>
+
+                        {/* Content */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <Label className="text-xs text-slate-500">Nội dung bài viết</Label>
+                            <button
+                              type="button"
+                              onClick={() => setSavedPreviewModes((prev) => ({ ...prev, [post.id]: !prev[post.id] }))}
+                              className={`text-[11px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 font-medium cursor-pointer ${
+                                savedPreviewModes[post.id]
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              <Eye className="w-3 h-3" />
+                              {savedPreviewModes[post.id] ? 'Xem văn bản gốc' : 'Xem trước Facebook'}
+                            </button>
+                          </div>
+
+                          {savedPreviewModes[post.id] ? (
+                            <div className="mt-1 max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-3 text-xs leading-relaxed shadow-inner">
+                              <div
+                                className="text-slate-800 space-y-2 [&>h1]:text-sm [&>h1]:font-bold [&>h1]:text-slate-900 [&>h1]:mb-2 [&>p]:mb-2 [&>ul]:list-disc [&>ul]:pl-5 [&>ul>li]:mb-1 [&>blockquote]:border-l-4 [&>blockquote]:border-emerald-500 [&>blockquote]:pl-2.5 [&>blockquote]:italic [&>blockquote]:text-slate-600"
+                                dangerouslySetInnerHTML={{
+                                  __html: markdownToFacebookHtml(post.content, post.title),
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div className="mt-1 max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-slate-50/50 p-3 text-xs font-mono whitespace-pre-wrap text-slate-700">
+                              {post.content}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Selected Images */}
+                        {post.selected_images && post.selected_images.length > 0 && (
+                          <div>
+                            <Label className="text-xs text-slate-500 mb-1 block">Ảnh đính kèm ({post.selected_images.length} ảnh):</Label>
+                            <div className="flex gap-2">
+                              {post.selected_images.map((url, imgIdx) => (
+                                <img
+                                  key={imgIdx}
+                                  src={url}
+                                  alt=""
+                                  className="w-14 h-14 rounded-lg object-cover border"
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Action Button */}
+                        <div className="pt-2 flex justify-end">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => loadSavedPostsToSchedule([post])}
+                            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                          >
+                            <CalendarDays className="w-3.5 h-3.5 mr-1" />
+                            Sử dụng bài này để lên lịch
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           {/* Sticky Bottom Action Bar */}
           {variantCards.length > 0 && (
-            <div className="sticky bottom-0 bg-white border-t pt-3 pb-2 flex gap-3">
+            <div className="sticky bottom-4 z-20 bg-white/95 backdrop-blur-md shadow-lg border border-slate-200 rounded-xl p-3 flex gap-3 mt-4">
               <Button type="button" variant="outline" className="flex-1" onClick={() => setVariantCards([])}>
                 Hủy bỏ
               </Button>
               <Button
                 type="button"
-                className="flex-1"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
                 onClick={confirmAndSchedule}
                 disabled={batchCreateSchedules.isPending}
               >

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Property, PropertyInsert, PropertyUpdate } from '@/types/database'
+import type { Property, PropertyInsert, PropertyUpdate, GeneratedPost, GeneratedPostInsert } from '@/types/database'
 
 export function useProperties() {
   return useQuery<Property[]>({
@@ -116,6 +116,56 @@ export function useUploadPropertyImage() {
           reader.onerror = (e) => reject(e)
           reader.readAsDataURL(file)
         })
+      }
+    },
+  })
+}
+
+export function useSavedPosts(propertyId?: string) {
+  return useQuery<GeneratedPost[]>({
+    queryKey: ['saved-posts', propertyId],
+    queryFn: async () => {
+      if (!propertyId) return []
+      const { data, error } = await (supabase.from('generated_posts') as any)
+        .select('*')
+        .eq('property_id', propertyId)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as GeneratedPost[]
+    },
+    enabled: !!propertyId,
+  })
+}
+
+export function useDeleteSavedPost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (postId: string) => {
+      const { error } = await (supabase.from('generated_posts') as any)
+        .delete()
+        .eq('id', postId)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['saved-posts'] })
+    },
+  })
+}
+
+export function useSaveGeneratedPosts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (posts: GeneratedPostInsert[]) => {
+      const { data, error } = await (supabase.from('generated_posts') as any)
+        .insert(posts)
+        .select()
+      if (error) throw error
+      return (data ?? []) as GeneratedPost[]
+    },
+    onSuccess: (_, variables) => {
+      const propertyId = variables[0]?.property_id
+      if (propertyId) {
+        qc.invalidateQueries({ queryKey: ['saved-posts', propertyId] })
       }
     },
   })

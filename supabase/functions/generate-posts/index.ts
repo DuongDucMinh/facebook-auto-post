@@ -1,12 +1,20 @@
 // Supabase Edge Function: generate-posts
 // Deploy with: supabase functions deploy generate-posts
-// Model: openai/gpt-oss-120b via Groq API
+// Primary Model: openai/gpt-oss-120b via Groq API
+// Fallback Models: openai/gpt-oss-20b, openai/gpt-oss-safeguard-20b, qwen/qwen3.8-27b
 // Rate Limits: RPM: 30 | RPD: 1K | TPM: 8K | TPD: 200K
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL = 'openai/gpt-oss-120b'
+const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-120b'
+const GROQ_FALLBACK_MODELS = [
+  'openai/gpt-oss-20b',
+  'openai/gpt-oss-safeguard-20b',
+  'qwen/qwen3.8-27b',
+] as const
+const ALL_GROQ_MODELS = [DEFAULT_GROQ_MODEL, ...GROQ_FALLBACK_MODELS] as const
+const GROQ_MODEL = DEFAULT_GROQ_MODEL
 
 const SYSTEM_PROMPT = `Bạn là một chuyên gia Copywriter Bất Động Sản thực chiến với hơn 10 năm kinh nghiệm marketing mạng xã hội. Nhiệm vụ của bạn là viết các bài đăng bán nhà/đất trên Facebook mang văn phong CHUYÊN GIA / THỰC TẾ, súc tích, trung thực, rõ ràng và chia nhiều đoạn có gạch đầu dòng (-).
 
@@ -121,7 +129,30 @@ interface GenerateRequest {
   agent_phone_2?: string
 }
 
-function cleanGeneratedPost(post: any, index: number) {
+// Hàm phân tích JSON an toàn, tự bóc tách markdown code fence nếu có
+function parseJsonSafe(raw: string): any {
+  let cleaned = raw.trim()
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  }
+  try {
+    return JSON.parse(cleaned)
+  } catch {
+    const firstBrace = cleaned.indexOf('{')
+    const lastBrace = cleaned.lastIndexOf('}')
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1))
+    }
+    const firstBracket = cleaned.indexOf('[')
+    const lastBracket = cleaned.lastIndexOf(']')
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      return JSON.parse(cleaned.slice(firstBracket, lastBracket + 1))
+    }
+    throw new Error('Không thể phân tích dữ liệu JSON')
+  }
+}
+
+function cleanGeneratedPost(post: any, index: number, usedModel?: string) {
   let content = String(post.content || '')
   content = content.replace(/^\s*(?:phần|mục)\s*\d+[\s\:\-\.]*/gim, '')
   content = content.replace(/^\s*(?:phần|mục)\s*\d+\s*$/gim, '')
@@ -142,6 +173,7 @@ function cleanGeneratedPost(post: any, index: number) {
     style: post.style || 'Chuyên gia / Ngắn gọn',
     title: title || `Bài viết BĐS ${index + 1}`,
     content,
+    used_model: usedModel || post.used_model,
   }
 }
 
@@ -241,49 +273,147 @@ Trả về duy nhất định dạng JSON thuần túy (JSON object có key "pos
   ]
 }`
 
-  const response = await fetch(GROQ_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 4096,
-      temperature: 0.85,
-      response_format: { type: 'json_object' },
-    }),
+async function generateBatch(
+  batchSize: number,
+  startIndex: number,
+  title: string,
+  description: string,
+  contactText: string,
+  apiKey: string,
+  preferredModelIndex = 0
+): Promise<{ variants: any[]; usedModelIndex: number; usedModel: string }> {
+  const batchStyles = Array.from({ length: batchSize }, (_, i) => {
+    return ALL_EXPERT_STYLES[(startIndex + i) % ALL_EXPERT_STYLES.length]
   })
 
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Groq API error: ${response.status} — ${errText}`)
-  }
+  const styleRequirements = batchStyles
+    .map((style, i) => `   - Bài ${startIndex + i + 1}: Áp dụng góc tiếp cận "${style}"`)
+    .join('\n')
 
-  const groqData = await response.json()
-  const rawText = groqData.choices?.[0]?.message?.content ?? '{"posts":[]}'
+  const userPrompt = `Hãy viết ĐÚNG ${batchSize} bài viết theo các thông tin sau:
+- Tiêu đề gốc tham khảo: ${title}
+- Mô tả chi tiết BĐS: ${description}
 
-  let parsed: any = {}
-  try {
-    parsed = JSON.parse(rawText)
-  } catch (e) {
-    console.error('JSON parse error from Groq batch response:', e)
-    return []
-  }
+### THÔNG TIN LIÊN HỆ BẮT BUỘC Ở CUỐI MỖI BÀI VIẾT:
+${contactText}
 
-  const rawVariants = Array.isArray(parsed) ? parsed : (parsed.posts ?? parsed.variants ?? [])
-  return rawVariants.map((item: any, idx: number) => {
-    const cleaned = cleanGeneratedPost(item, startIndex + idx)
-    cleaned.variant_index = startIndex + idx + 1
-    if (!cleaned.style || cleaned.style === 'Chuyên gia / Ngắn gọn') {
-      cleaned.style = batchStyles[idx] || 'Chuyên gia / Thực tế'
+### YÊU CẦU CHO TỪNG BÀI VIẾT TRONG BATCH NÀY:
+${styleRequirements}
+   - Tiêu đề: ĐẦY ĐỦ THÔNG TIN (loại hình, khu vực, điểm mạnh, giá mờ) nhưng BIẾN TẤU từ ngữ khác nhau.
+   - Thân bài: Chia nhiều đoạn ngắn cách nhau bằng \\n\\n, có in đậm **đề mục**, in đậm **thông số/từ khóa**, có gạch đầu dòng (-), in nghiêng *câu đúc kết*.
+   - Tuyệt đối KHÔNG có icon/emoji.
+   - Cuối bài gắn chính xác khối thông tin liên hệ như trên.
+
+Trả về duy nhất định dạng JSON thuần túy (JSON object có key "posts" là mảng gồm đúng ${batchSize} phần tử):
+{
+  "posts": [
+    {
+      "variant_index": ${startIndex + 1},
+      "style": "${batchStyles[0] || 'Chuyên gia / Tổng quan giá trị'}",
+      "title": "TIÊU ĐỀ IN HOA ĐẦY ĐỦ THÔNG TIN BIẾN TẤU",
+      "content": "Nội dung bài viết chia nhiều đoạn, có in đậm **đề mục**, in đậm **thông số/từ khóa**, in nghiêng *câu đúc kết*, có gạch đầu dòng (-), cách nhau bằng \\n\\n, cuối bài có đầy đủ thông tin liên hệ in đậm"
     }
-    return cleaned
-  })
+  ]
+}`
+
+  let lastError: Error | null = null
+
+  // Luân chuyển tuần tự các model nếu model hiện tại chạm limit (Rate Limit, Quá tải hoặc lỗi)
+  for (let attempt = 0; attempt < ALL_GROQ_MODELS.length; attempt++) {
+    const modelIdx = (preferredModelIndex + attempt) % ALL_GROQ_MODELS.length
+    const currentModel = ALL_GROQ_MODELS[modelIdx]
+
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: currentModel,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: 4096,
+          temperature: 0.85,
+          response_format: { type: 'json_object' },
+        }),
+      })
+
+      if (!response.ok) {
+        const errText = await response.text()
+        if (response.status === 401) {
+          throw new Error('GROQ_API_KEY không hợp lệ hoặc đã hết hạn trong Supabase Secrets')
+        }
+
+        const isRateLimit = response.status === 429 || /rate_limit|rate limit|quota|tokens per minute|requests per minute|tpm|rpm/i.test(errText)
+        const isOverloaded = response.status === 503 || /overloaded|capacity/i.test(errText)
+        const reason = isRateLimit
+          ? 'Chạm giới hạn Rate Limit (429)'
+          : isOverloaded
+          ? 'Máy chủ model quá tải (503)'
+          : `Lỗi API (${response.status})`
+
+        // Nếu còn model dự phòng tiếp theo trong danh sách, luân chuyển ngay
+        if (attempt < ALL_GROQ_MODELS.length - 1) {
+          const nextModelIdx = (modelIdx + 1) % ALL_GROQ_MODELS.length
+          const nextModel = ALL_GROQ_MODELS[nextModelIdx]
+          console.warn(`[Groq Edge Function] Model "${currentModel}" ${reason}. Luân chuyển sang "${nextModel}"...`)
+          await new Promise((r) => setTimeout(r, 400))
+          continue
+        }
+
+        throw new Error(`Groq API error: ${response.status} — ${errText}`)
+      }
+
+      const groqData = await response.json()
+      const rawText = groqData.choices?.[0]?.message?.content ?? '{"posts":[]}'
+
+      let parsed: any = {}
+      try {
+        parsed = parseJsonSafe(rawText)
+      } catch (e) {
+        console.error(`JSON parse error from Groq model ${currentModel}:`, e)
+        if (attempt < ALL_GROQ_MODELS.length - 1) {
+          const nextModelIdx = (modelIdx + 1) % ALL_GROQ_MODELS.length
+          const nextModel = ALL_GROQ_MODELS[nextModelIdx]
+          console.warn(`[Groq Edge Function] Không thể parse JSON từ model "${currentModel}". Thử model "${nextModel}"...`)
+          await new Promise((r) => setTimeout(r, 400))
+          continue
+        }
+        return { variants: [], usedModelIndex: modelIdx, usedModel: currentModel }
+      }
+
+      const rawVariants = Array.isArray(parsed) ? parsed : (parsed.posts ?? parsed.variants ?? [])
+      const variants = rawVariants.map((item: any, idx: number) => {
+        const cleaned = cleanGeneratedPost(item, startIndex + idx, currentModel)
+        cleaned.variant_index = startIndex + idx + 1
+        if (!cleaned.style || cleaned.style === 'Chuyên gia / Ngắn gọn') {
+          cleaned.style = batchStyles[idx] || 'Chuyên gia / Thực tế'
+        }
+        return cleaned
+      })
+
+      return { variants, usedModelIndex: modelIdx, usedModel: currentModel }
+    } catch (err: any) {
+      lastError = err
+      if (err?.message?.includes('GROQ_API_KEY không hợp lệ')) {
+        throw err
+      }
+
+      if (attempt < ALL_GROQ_MODELS.length - 1) {
+        const nextModelIdx = (modelIdx + 1) % ALL_GROQ_MODELS.length
+        const nextModel = ALL_GROQ_MODELS[nextModelIdx]
+        console.warn(`[Groq Edge Function] Lỗi model "${currentModel}": ${err?.message}. Luân chuyển sang "${nextModel}"...`)
+        await new Promise((r) => setTimeout(r, 400))
+        continue
+      }
+    }
+  }
+
+  throw lastError || new Error(`Tất cả các model Groq (${ALL_GROQ_MODELS.join(', ')}) đều chạm giới hạn hoặc gặp sự cố.`)
 }
 
 serve(async (req) => {
@@ -321,16 +451,19 @@ serve(async (req) => {
     const batchSizes = getBatchSizes(num_variants, 5)
     let allVariants: any[] = []
     let currentStartIndex = 0
+    let activeModelIndex = 0
 
     for (const size of batchSizes) {
-      const batchVariants = await generateBatch(
+      const { variants: batchVariants, usedModelIndex } = await generateBatch(
         size,
         currentStartIndex,
         title,
         description,
         contactText,
-        apiKey
+        apiKey,
+        activeModelIndex
       )
+      activeModelIndex = usedModelIndex
       allVariants = [...allVariants, ...batchVariants]
       currentStartIndex += size
     }
@@ -339,14 +472,16 @@ serve(async (req) => {
     if (allVariants.length < num_variants) {
       const missingCount = num_variants - allVariants.length
       try {
-        const topUpVariants = await generateBatch(
+        const { variants: topUpVariants, usedModelIndex } = await generateBatch(
           missingCount,
           allVariants.length,
           title,
           description,
           contactText,
-          apiKey
+          apiKey,
+          activeModelIndex
         )
+        activeModelIndex = usedModelIndex
         allVariants = [...allVariants, ...topUpVariants]
       } catch (err) {
         console.warn('Top-up batch failed:', err)

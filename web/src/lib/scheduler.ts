@@ -124,13 +124,15 @@ export interface GenerateScheduleSlotsOptions {
   startPreference?: 'auto' | 'tomorrow' | 'today'
   goldenHours?: typeof DEFAULT_GOLDEN_HOURS
   now?: Date
+  specificDates?: (Date | string)[]
 }
 
 /**
  * Thuật toán lên lịch thông minh:
  * 1. TUYỆT ĐỐI KHÔNG lên lịch vào giờ quá khứ (tất cả khung giờ đều sau thời điểm tạo).
- * 2. Phân bổ đều và trọn vẹn số bài (numPosts) vào đúng số ngày (numDays) người dùng chọn.
- * 3. Tự động nhận diện các khung giờ còn lại trong ngày hôm nay, hoặc bắt đầu từ sáng mai nếu ngày hôm nay đã hết giờ.
+ * 2. Nếu người dùng chọn các ngày cụ thể: Phân bổ đều số bài vào các ngày được chọn theo khung giờ vàng.
+ * 3. Nếu không chọn ngày cụ thể: Phân bổ đều và trọn vẹn số bài (numPosts) vào đúng số ngày (numDays) người dùng chọn.
+ * 4. Tự động nhận diện các khung giờ còn lại trong ngày hôm nay, hoặc bắt đầu từ sáng mai nếu ngày hôm nay đã hết giờ.
  */
 export function generateScheduleSlots(options: GenerateScheduleSlotsOptions): Date[] {
   const {
@@ -139,13 +141,136 @@ export function generateScheduleSlots(options: GenerateScheduleSlotsOptions): Da
     startPreference = 'auto',
     goldenHours = DEFAULT_GOLDEN_HOURS,
     now = new Date(),
+    specificDates,
   } = options
 
-  if (numPosts <= 0 || numDays <= 0) return []
+  if (numPosts <= 0) return []
 
   // Sắp xếp các khung giờ vàng theo thứ tự thời gian trong ngày
   const sortedGH = [...goldenHours].sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
   const minFutureTime = now.getTime() + 15 * 60 * 1000 // Tối thiểu 15 phút tới
+
+  // TRƯỜNG HỢP 1: Người dùng lựa chọn các ngày đăng cụ thể
+  if (specificDates && specificDates.length > 0) {
+    const parsedDates: Date[] = []
+    for (const d of specificDates) {
+      let dateObj: Date
+      if (typeof d === 'string') {
+        const [y, m, day] = d.split('-').map(Number)
+        dateObj = new Date(y, m - 1, day, 0, 0, 0, 0)
+      } else {
+        dateObj = new Date(d)
+        dateObj.setHours(0, 0, 0, 0)
+      }
+      if (!isNaN(dateObj.getTime())) {
+        parsedDates.push(dateObj)
+      }
+    }
+
+    // Loại trùng & sắp xếp tăng dần theo thời gian
+    const uniqueTimeMap = new Map<number, Date>()
+    for (const d of parsedDates) {
+      uniqueTimeMap.set(d.getTime(), d)
+    }
+    const sortedDates = Array.from(uniqueTimeMap.values()).sort((a, b) => a.getTime() - b.getTime())
+
+    const validDays: Array<{ date: Date; availableGH: typeof DEFAULT_GOLDEN_HOURS }> = []
+    const todayZero = new Date(now)
+    todayZero.setHours(0, 0, 0, 0)
+
+    for (const d of sortedDates) {
+      const isToday = d.getTime() === todayZero.getTime()
+      const isPast = d.getTime() < todayZero.getTime()
+      if (isPast) continue
+
+      let availableGH = sortedGH
+      if (isToday) {
+        availableGH = sortedGH.filter((gh) => {
+          const slot = new Date(now)
+          slot.setHours(gh.hour, gh.minute, 0, 0)
+          return slot.getTime() > minFutureTime
+        })
+      }
+
+      if (availableGH.length > 0) {
+        validDays.push({ date: d, availableGH })
+      }
+    }
+
+    if (validDays.length > 0) {
+      const postsPerDay = new Array(validDays.length).fill(0)
+      let remainingPosts = numPosts
+
+      // Phân bổ đều các bài vào các ngày đã chọn
+      while (remainingPosts > 0) {
+        let assigned = false
+        for (let i = 0; i < validDays.length; i++) {
+          if (remainingPosts <= 0) break
+          if (postsPerDay[i] < validDays[i].availableGH.length) {
+            postsPerDay[i]++
+            remainingPosts--
+            assigned = true
+          }
+        }
+        if (!assigned) {
+          // Nếu số bài vượt quá tổng số slot giờ vàng cơ bản, tiếp tục phân bổ thêm vòng
+          for (let i = 0; i < validDays.length; i++) {
+            if (remainingPosts <= 0) break
+            postsPerDay[i]++
+            remainingPosts--
+            assigned = true
+          }
+        }
+        if (!assigned) break
+      }
+
+      const slots: Date[] = []
+      for (let i = 0; i < validDays.length; i++) {
+        const count = postsPerDay[i]
+        if (count <= 0) continue
+
+        const av = validDays[i].availableGH
+        let selectedHours: typeof DEFAULT_GOLDEN_HOURS = []
+
+        if (count >= av.length) {
+          selectedHours = [...av]
+          // Thêm các khung giờ dôi dư nếu count > av.length (cách nhau 45 phút)
+          const extraCount = count - av.length
+          for (let e = 0; e < extraCount; e++) {
+            const baseHour = av[e % av.length]
+            const extraH = (baseHour.hour + 1) % 24
+            selectedHours.push({ hour: extraH, minute: (baseHour.minute + 45) % 60 })
+          }
+        } else if (count === 1) {
+          const mid = Math.floor(av.length / 2)
+          selectedHours = [av[mid]]
+        } else if (count === 2) {
+          selectedHours = [av[0], av[av.length - 1]]
+        } else if (count === 3 && av.length === 4) {
+          selectedHours = [av[0], av[1], av[3]]
+        } else {
+          selectedHours = av.slice(0, count)
+        }
+
+        for (const gh of selectedHours) {
+          const slotDate = new Date(validDays[i].date)
+          slotDate.setHours(gh.hour, gh.minute, 0, 0)
+          if (slotDate.getTime() > now.getTime()) {
+            slots.push(slotDate)
+          }
+        }
+      }
+
+      slots.sort((a, b) => a.getTime() - b.getTime())
+      if (slots.length > 0) {
+        return slots.slice(0, numPosts)
+      }
+    }
+  }
+
+  // TRƯỜNG HỢP 2 (Mặc định): Không chọn ngày cụ thể -> dùng số ngày đăng liên tiếp
+  if (numDays <= 0) return []
+
 
   // Lọc các khung giờ của HÔM NAY chưa qua (thực sự ở tương lai)
   const todayAvailableGH = sortedGH.filter((gh) => {
