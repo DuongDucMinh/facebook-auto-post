@@ -16,6 +16,7 @@ import {
   Building2,
   Edit3,
   ExternalLink,
+  Trash2,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Badge } from '@/components/ui/badge'
@@ -27,13 +28,49 @@ import {
   useSchedules,
   useRetrySchedule,
   usePostNowSchedule,
+  useDeleteSchedule,
 } from '@/hooks/useSchedules'
 import { getStatusLabel, truncate, getStatusColor, cn } from '@/lib/utils'
 import { ScheduleDetailModal } from '@/components/schedule/ScheduleDetailModal'
 import { toast } from 'sonner'
 
-const GOLDEN_HOUR_LABELS = ['07:00 - 08:00', '11:00 - 12:00', '16:00 - 17:00', '20:00 - 21:00']
-const GOLDEN_START = [7, 11, 16, 20]
+const CALENDAR_SLOTS = [
+  {
+    id: 'g0',
+    label: '07:00 - 08:00',
+    sub: 'Khung giờ vàng sáng',
+    isInstant: false,
+    match: (h: number) => h === 7 || h === 8,
+  },
+  {
+    id: 'g1',
+    label: '11:00 - 12:00',
+    sub: 'Khung giờ vàng trưa',
+    isInstant: false,
+    match: (h: number) => h === 11 || h === 12,
+  },
+  {
+    id: 'g2',
+    label: '16:00 - 17:00',
+    sub: 'Khung giờ vàng chiều',
+    isInstant: false,
+    match: (h: number) => h === 16 || h === 17,
+  },
+  {
+    id: 'g3',
+    label: '20:00 - 21:00',
+    sub: 'Khung giờ vàng tối',
+    isInstant: false,
+    match: (h: number) => h === 20 || h === 21,
+  },
+  {
+    id: 'instant',
+    label: '⚡ Đăng ngay / Giờ khác',
+    sub: 'Ngoài 4 giờ vàng',
+    isInstant: true,
+    match: (h: number) => ![7, 8, 11, 12, 16, 17, 20, 21].includes(h),
+  },
+]
 
 export function Dashboard() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }))
@@ -45,16 +82,19 @@ export function Dashboard() {
   const { data: schedules } = useSchedules(weekStart)
   const retryMutation = useRetrySchedule()
   const postNowMutation = usePostNowSchedule()
+  const deleteMutation = useDeleteSchedule()
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
-  // Group schedules by day + hour slot
-  const getSchedulesForSlot = (day: Date, slotStartHour: number) => {
+  // Group schedules by day + hour slot (bao quát 100% mọi khung giờ, đảm bảo không bao giờ bị mất bài)
+  const getSchedulesForSlot = (day: Date, slotIdx: number) => {
     if (!schedules) return []
     const dayStr = format(day, 'yyyy-MM-dd')
+    const slot = CALENDAR_SLOTS[slotIdx]
     return (schedules as any[]).filter((s: any) => {
       const d = new Date(s.scheduled_at)
-      return format(d, 'yyyy-MM-dd') === dayStr && d.getHours() === slotStartHour
+      const h = d.getHours()
+      return format(d, 'yyyy-MM-dd') === dayStr && slot.match(h)
     })
   }
 
@@ -70,9 +110,34 @@ export function Dashboard() {
     }
     try {
       await postNowMutation.mutateAsync(scheduleId)
-      toast.success('⚡ Đã kích hoạt lệnh ĐĂNG NGAY! Extension sẽ đăng bài trong giây lát.')
+      toast.success('⚡ Đã kích hoạt lệnh ĐĂNG NGAY! Bài viết đã chuyển sang hàng "Đăng ngay / Giờ khác" hôm nay và đang được đăng.')
     } catch (err: any) {
       toast.error(`Lỗi: ${err?.message || 'Không thể đăng ngay'}`)
+    }
+  }
+
+  // Quick cancel/delete schedule
+  const handleCancelSchedule = async (e: React.MouseEvent, scheduleId: string) => {
+    e.stopPropagation()
+    if (!confirm('Bạn có chắc chắn muốn HỦY lịch đăng này không?')) {
+      return
+    }
+    try {
+      await deleteMutation.mutateAsync(scheduleId)
+      toast.success('Đã hủy lịch đăng thành công!')
+      if (selectedSlot) {
+        const remaining = selectedSlot.items.filter((item: any) => item.id !== scheduleId)
+        if (remaining.length === 0) {
+          setSelectedSlot(null)
+        } else {
+          setSelectedSlot({ ...selectedSlot, items: remaining })
+        }
+      }
+      if (viewingSchedule?.id === scheduleId) {
+        setViewingSchedule(null)
+      }
+    } catch (err: any) {
+      toast.error(`Lỗi khi hủy lịch: ${err?.message || 'Không thể hủy lịch'}`)
     }
   }
 
@@ -158,9 +223,9 @@ export function Dashboard() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">Lịch đăng bài theo khung giờ vàng</CardTitle>
+              <CardTitle className="text-base">Lịch đăng bài theo khung giờ vàng & Đăng ngay</CardTitle>
               <p className="text-xs text-slate-500 mt-0.5">
-                Nhấn vào từng ô bài viết để <strong>xem chi tiết, chỉnh sửa câu chữ</strong> hoặc bấm <strong>Đăng ngay</strong>.
+                Bao gồm 4 khung giờ vàng chuẩn và hàng <strong>⚡ Đăng ngay / Giờ khác</strong> để theo dõi trực tiếp các bài kích hoạt tức thì.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -205,19 +270,29 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {GOLDEN_START.map((startHour, slotIdx) => (
-                <tr key={startHour} className="border-b last:border-0">
-                  <td className="p-3 text-xs text-slate-600 font-medium bg-amber-50/50 border-r align-middle">
-                    <span className="font-semibold block">{GOLDEN_HOUR_LABELS[slotIdx]}</span>
-                    <span className="text-[10px] text-amber-700/80">Khung giờ vàng</span>
+              {CALENDAR_SLOTS.map((slot, slotIdx) => (
+                <tr key={slot.id} className="border-b last:border-0">
+                  <td
+                    className={cn(
+                      'p-3 text-xs font-medium border-r align-middle',
+                      slot.isInstant ? 'bg-amber-100/70 text-amber-900 border-amber-200' : 'bg-amber-50/50 text-slate-600'
+                    )}
+                  >
+                    <span className={cn('font-semibold block', slot.isInstant && 'text-amber-900 flex items-center gap-1')}>
+                      {slot.isInstant && <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-500 flex-shrink-0" />}
+                      {slot.label}
+                    </span>
+                    <span className={cn('text-[10px]', slot.isInstant ? 'text-amber-800/85 font-medium' : 'text-amber-700/80')}>
+                      {slot.sub}
+                    </span>
                   </td>
                   {weekDays.map((day) => {
-                    const cells = getSchedulesForSlot(day, startHour)
+                    const cells = getSchedulesForSlot(day, slotIdx)
                     const hasMany = cells.length > 2
                     const displayItems = hasMany ? cells.slice(0, 2) : cells
 
                     return (
-                      <td key={day.toISOString()} className="p-1.5 align-top border-r last:border-0 min-w-[135px]">
+                      <td key={day.toISOString()} className={cn("p-1.5 align-top border-r last:border-0 min-w-[135px]", slot.isInstant && "bg-amber-50/20")}>
                         {cells.length === 0 ? (
                           <div className="h-16 border border-dashed border-slate-100 rounded-lg flex items-center justify-center text-[11px] text-slate-300">
                             Trống
@@ -242,17 +317,24 @@ export function Dashboard() {
                                   </p>
                                 </div>
 
-                                {/* Facebook Group info */}
-                                <div className="text-[10px] text-slate-500 truncate font-mono flex items-center gap-1">
-                                  <Globe className="w-2.5 h-2.5 text-blue-500 flex-shrink-0" />
-                                  <span className="truncate">
-                                    {s.target_group_url ? s.target_group_url.replace('https://www.facebook.com/groups/', 'fb/') : 'Facebook Group'}
+                                {/* Facebook Group info & time */}
+                                <div className="text-[10px] text-slate-500 truncate font-mono flex items-center justify-between gap-1">
+                                  <span className="flex items-center gap-1 truncate min-w-0">
+                                    <Globe className="w-2.5 h-2.5 text-blue-500 flex-shrink-0" />
+                                    <span className="truncate">
+                                      {s.target_group_url ? s.target_group_url.replace('https://www.facebook.com/groups/', 'fb/') : 'Facebook Group'}
+                                    </span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-600 font-semibold flex items-center gap-0.5 flex-shrink-0 bg-slate-100 px-1 py-0.5 rounded font-sans">
+                                    <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                    {format(new Date(s.scheduled_at), 'HH:mm')}
                                   </span>
                                 </div>
 
                                 {/* Status badge and quick actions */}
                                 <div className="flex items-center justify-between mt-1 pt-0.5 gap-1 border-t border-slate-100">
-                                  <Badge variant={statusBadgeVariant(s.status)} className="text-[9px] py-0 px-1">
+                                  <Badge variant={statusBadgeVariant(s.status)} className="text-[9px] py-0 px-1 flex items-center gap-1">
+                                    {s.status === 'posting' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping inline-block" />}
                                     {getStatusLabel(s.status)}
                                   </Badge>
 
@@ -281,6 +363,16 @@ export function Dashboard() {
                                         <RotateCcw className="w-3 h-3" />
                                       </button>
                                     )}
+
+                                    {/* Quick Cancel Schedule */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleCancelSchedule(e, s.id)}
+                                      title="Hủy lịch đăng này"
+                                      className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-0.5 rounded transition-colors cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
                                   </div>
                                 </div>
                               </div>
@@ -293,7 +385,7 @@ export function Dashboard() {
                                 onClick={() =>
                                   setSelectedSlot({
                                     day,
-                                    hourLabel: GOLDEN_HOUR_LABELS[slotIdx],
+                                    hourLabel: slot.label,
                                     items: cells,
                                   })
                                 }
@@ -361,7 +453,7 @@ export function Dashboard() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200"
+                        className="h-7 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 cursor-pointer"
                         onClick={(e) => handleQuickPostNow(e, s.id)}
                       >
                         <Zap className="w-3 h-3 mr-1 fill-current" /> Đăng ngay
@@ -369,7 +461,7 @@ export function Dashboard() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 text-xs text-slate-600 hover:text-slate-900"
+                        className="h-7 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation()
                           setViewingSchedule(s)
@@ -377,14 +469,29 @@ export function Dashboard() {
                       >
                         <Edit3 className="w-3 h-3 mr-1" /> Chi tiết
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 cursor-pointer"
+                        onClick={(e) => handleCancelSchedule(e, s.id)}
+                        title="Hủy lịch đăng này"
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" /> Hủy lịch
+                      </Button>
                     </div>
                   </div>
 
-                  <div className="text-xs text-slate-600 flex items-center gap-1.5 font-mono bg-slate-50 p-2 rounded-lg border border-slate-200/70">
-                    <Globe className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                    <span className="text-slate-400 font-sans">Nhóm:</span>
-                    <span className="truncate max-w-[400px] text-blue-600 font-medium">
-                      {s.target_group_url}
+                  <div className="text-xs text-slate-600 flex items-center justify-between gap-1.5 font-mono bg-slate-50 p-2 rounded-lg border border-slate-200/70">
+                    <span className="flex items-center gap-1.5 truncate">
+                      <Globe className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                      <span className="text-slate-400 font-sans">Nhóm:</span>
+                      <span className="truncate max-w-[400px] text-blue-600 font-medium">
+                        {s.target_group_url}
+                      </span>
+                    </span>
+                    <span className="text-xs text-slate-600 font-semibold flex items-center gap-1 flex-shrink-0 bg-white px-2 py-0.5 rounded border border-slate-200 font-sans">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      {format(new Date(s.scheduled_at), 'HH:mm')}
                     </span>
                   </div>
 

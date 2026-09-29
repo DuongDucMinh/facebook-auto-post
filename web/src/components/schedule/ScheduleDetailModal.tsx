@@ -18,6 +18,7 @@ import {
   Sparkles,
   Image as ImageIcon,
   CheckCircle2,
+  UserCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -184,17 +185,17 @@ export function ScheduleDetailModal({ schedule, onClose }: ScheduleDetailModalPr
     }
   }
 
-  // Handle Delete
+  // Handle Cancel / Delete
   const handleDelete = async () => {
-    if (!confirm('Bạn có chắc chắn muốn XÓA bài đăng này khỏi lịch? Thao tác này không thể hoàn tác.')) {
+    if (!confirm('Bạn có chắc chắn muốn HỦY lịch đăng này không? Thao tác này không thể hoàn tác.')) {
       return
     }
     try {
       await deleteScheduleMutation.mutateAsync(schedule.id)
-      toast.success('Đã xóa bài đăng khỏi lịch!')
+      toast.success('Đã hủy lịch đăng thành công!')
       onClose()
     } catch (err: any) {
-      toast.error(`Không thể xóa: ${err?.message || 'Vui lòng thử lại'}`)
+      toast.error(`Không thể hủy lịch: ${err?.message || 'Vui lòng thử lại'}`)
     }
   }
 
@@ -361,6 +362,19 @@ export function ScheduleDetailModal({ schedule, onClose }: ScheduleDetailModalPr
                 ))}
               </div>
             </div>
+
+            {/* Tagged Collaborators Info */}
+            {Array.isArray(schedule.tagged_collaborators) && schedule.tagged_collaborators.length > 0 && (
+              <div className="col-span-2 flex items-center gap-2 bg-blue-50/80 border border-blue-200/80 rounded-lg px-3 py-2 text-xs text-blue-900">
+                <UserCheck className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <span>
+                  Gắn thẻ cộng sự Facebook ({schedule.tagged_collaborators.length}):{' '}
+                  <strong>
+                    {schedule.tagged_collaborators.map((c: any) => `${c.name} (UID: ${c.fb_uid})`).join(', ')}
+                  </strong>
+                </span>
+              </div>
+            )}
           </div>
 
           {/* 3. Post Title */}
@@ -465,7 +479,7 @@ export function ScheduleDetailModal({ schedule, onClose }: ScheduleDetailModalPr
 
         {/* Modal Footer Actions */}
         <div className="p-4 border-t bg-slate-50 flex items-center justify-between gap-3">
-          {/* Left side: Delete button */}
+          {/* Left side: Cancel/Delete button */}
           <Button
             type="button"
             variant="ghost"
@@ -475,7 +489,7 @@ export function ScheduleDetailModal({ schedule, onClose }: ScheduleDetailModalPr
             className="text-red-500 hover:text-red-700 hover:bg-red-50"
           >
             <Trash2 className="w-4 h-4 mr-1.5" />
-            {deleteScheduleMutation.isPending ? 'Đang xóa...' : 'Xóa lịch này'}
+            {deleteScheduleMutation.isPending ? 'Đang hủy...' : 'Hủy lịch đăng này'}
           </Button>
 
           {/* Right side: Actions */}

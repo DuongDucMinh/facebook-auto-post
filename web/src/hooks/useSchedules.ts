@@ -18,6 +18,7 @@ export function useSchedules(weekStart?: Date) {
       if (error) throw error
       return (data ?? []) as any[]
     },
+    refetchInterval: 5_000,
   })
 }
 
@@ -175,6 +176,7 @@ export function useDeleteSchedule() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['schedules'] })
       qc.invalidateQueries({ queryKey: ['schedule-stats'] })
+      qc.invalidateQueries({ queryKey: ['chart-data'] })
     },
   })
 }
@@ -183,10 +185,12 @@ export function usePostNowSchedule() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (scheduleId: string) => {
-      const now = new Date().toISOString()
+      // Đặt thời gian lùi lại 2 phút trước để đảm bảo scheduled_at <= now 100%,
+      // tránh hoàn toàn lỗi lệch mili-giây giữa server/client khiến Supabase không trả về schedule
+      const pastTime = new Date(Date.now() - 120_000).toISOString()
       const { error } = await (supabase.from('schedules') as any)
         .update({
-          scheduled_at: now,
+          scheduled_at: pastTime,
           status: 'pending',
           error_log: null,
         })
