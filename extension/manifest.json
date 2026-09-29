@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RealPost AI Bridge",
-  "version": "1.1.0",
+  "version": "1.2.4",
   "description": "Tự động đăng bài BĐS lên Facebook Groups theo lịch từ RealPost AI",
   "permissions": [
     "tabs",
