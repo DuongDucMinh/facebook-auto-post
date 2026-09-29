@@ -8,6 +8,13 @@ import {
   RotateCcw,
   Code2,
   FileText,
+  UserCheck,
+  Plus,
+  Trash2,
+  ExternalLink,
+  ShieldCheck,
+  Search,
+  Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -20,6 +27,7 @@ import { useSettings, useUpdateSettings } from '@/hooks/useSettings'
 import { supabase } from '@/lib/supabase'
 import { SYSTEM_PROMPT_BDS } from '@/lib/groq'
 import { cn } from '@/lib/utils'
+import type { TaggedCollaborator } from '@/types/database'
 
 export function SettingsPage() {
   const { data: settings, isLoading } = useSettings()
@@ -30,6 +38,22 @@ export function SettingsPage() {
   const [visibleMode, setVisibleMode] = useState(true)
   const [customPrompt, setCustomPrompt] = useState('')
   const [promptViewTab, setPromptViewTab] = useState<'editor' | 'default'>('editor')
+
+  // Tagged Collaborators state
+  const [collaborators, setCollaborators] = useState<TaggedCollaborator[]>([])
+  const [newCollabName, setNewCollabName] = useState('')
+  const [newCollabUid, setNewCollabUid] = useState('')
+  const [newCollabUsername, setNewCollabUsername] = useState('')
+  const [isAddingCollab, setIsAddingCollab] = useState(false)
+  const [verifyInput, setVerifyInput] = useState('')
+  const [isVerifying, setIsVerifying] = useState(false)
+  const [verifiedResult, setVerifiedResult] = useState<{
+    name: string
+    uid: string
+    username?: string
+    avatarUrl?: string
+    verified: boolean
+  } | null>(null)
 
   // Initialize state from settings
   const [initialized, setInitialized] = useState(false)
@@ -55,6 +79,19 @@ export function SettingsPage() {
     setVisibleMode(settings.extension_visible_mode ?? true)
     const localPrompt = localStorage.getItem('REALPOST_CUSTOM_SYSTEM_PROMPT')
     setCustomPrompt(settings.custom_system_prompt ?? (localPrompt || SYSTEM_PROMPT_BDS))
+
+    // Parse collaborators
+    const localCollabs = localStorage.getItem('REALPOST_TAGGED_COLLABORATORS')
+    let parsedCollabs: TaggedCollaborator[] = []
+    if (settings.tagged_collaborators && Array.isArray(settings.tagged_collaborators)) {
+      parsedCollabs = settings.tagged_collaborators
+    } else if (localCollabs) {
+      try {
+        parsedCollabs = JSON.parse(localCollabs)
+      } catch {}
+    }
+    setCollaborators(parsedCollabs)
+
     setInitialized(true)
   }
 
@@ -84,6 +121,200 @@ export function SettingsPage() {
       console.error('Lỗi lưu thông tin môi giới:', err)
       toast.error('Lỗi khi lưu thông tin môi giới: ' + (err.message || String(err)))
     }
+  }
+
+  const handleSaveCollaborators = async (newList: TaggedCollaborator[]) => {
+    setCollaborators(newList)
+    localStorage.setItem('REALPOST_TAGGED_COLLABORATORS', JSON.stringify(newList))
+    try {
+      await updateSettings.mutateAsync({ tagged_collaborators: newList })
+      toast.success('Đã lưu danh sách cộng sự gắn thẻ thành công!')
+    } catch (err: any) {
+      console.warn('Lỗi lưu Supabase (có thể bảng chưa có cột tagged_collaborators):', err)
+      toast.success('Đã lưu danh sách cộng sự vào trình duyệt & Extension!')
+    }
+
+    // Sync to extension immediately
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      window.postMessage({
+        type: 'REALPOST_CONFIG',
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+        supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        accessToken: session?.access_token,
+        refreshToken: session?.refresh_token,
+        taggedCollaborators: newList,
+      }, '*')
+    } catch {}
+  }
+
+  const handleUidInputChange = (val: string) => {
+    const trimmed = val.trim()
+    // 1. Kiểm tra nếu người dùng dán URL có id=... (profile.php?id=1000...)
+    const idMatch = trimmed.match(/[?&]id=(\d+)/i)
+    if (idMatch && idMatch[1]) {
+      setNewCollabUid(idMatch[1])
+      toast.info(`Đã tự động trích xuất Facebook UID: ${idMatch[1]}`)
+      return
+    }
+
+    // 2. Nếu là URL facebook.com/username hoặc facebook.com/1000...
+    const urlMatch = trimmed.match(/facebook\.com\/(?:profile\.php\?id=)?([a-zA-Z0-9\._]+)/i)
+    if (urlMatch && urlMatch[1]) {
+      const slug = urlMatch[1]
+      if (/^\d{8,}$/.test(slug)) {
+        setNewCollabUid(slug)
+        toast.info(`Đã tự động trích xuất Facebook UID: ${slug}`)
+      } else {
+        if (!newCollabUsername) setNewCollabUsername(slug)
+        setNewCollabUid('')
+        toast.info(`Đã nhận diện Username Facebook: ${slug}. Vui lòng nhập UID số để so khớp chính xác!`)
+      }
+      return
+    }
+
+    setNewCollabUid(val)
+  }
+
+  const handleVerifyProfile = async () => {
+    const input = (verifyInput || newCollabUid || '').trim()
+    if (!input) {
+      toast.error('Vui lòng nhập link Facebook cá nhân hoặc UID để kiểm tra')
+      return
+    }
+
+    setIsVerifying(true)
+    setVerifiedResult(null)
+
+    const reqId = 'req_' + Date.now()
+    let responded = false
+
+    const listener = (event: MessageEvent) => {
+      if (event.data?.type === 'REALPOST_VERIFY_FB_PROFILE_RES' && event.data?.requestId === reqId) {
+        responded = true
+        window.removeEventListener('message', listener)
+        setIsVerifying(false)
+
+        if (event.data.success && event.data.verified) {
+          const res = {
+            name: event.data.name,
+            uid: event.data.uid,
+            username: event.data.username || '',
+            avatarUrl: event.data.avatarUrl || '',
+            verified: true,
+          }
+          setVerifiedResult(res)
+          setNewCollabName(res.name)
+          setNewCollabUid(res.uid)
+          setNewCollabUsername(res.username)
+          toast.success(`Đã xác thực thành công: ${res.name} (UID: ${res.uid})`)
+        } else {
+          toast.error(event.data.error || 'Không tìm thấy tài khoản Facebook này hoặc link không hợp lệ')
+        }
+      }
+    }
+
+    window.addEventListener('message', listener)
+
+    // Gửi message sang Extension
+    window.postMessage({
+      type: 'REALPOST_VERIFY_FB_PROFILE',
+      requestId: reqId,
+      target: input,
+    }, '*')
+
+    // Fallback nếu Extension chưa nạp hoặc offline
+    setTimeout(async () => {
+      if (!responded) {
+        window.removeEventListener('message', listener)
+
+        // Nếu input là dãy số UID: kiểm tra nhanh qua Graph API
+        const numericMatch = input.match(/(\d{6,})/)?.[1]
+        if (numericMatch) {
+          try {
+            const avatarUrl = `https://graph.facebook.com/${numericMatch}/picture?type=normal`
+            const imgRes = await fetch(avatarUrl, { method: 'HEAD' })
+            if (imgRes.ok) {
+              const res = {
+                name: newCollabName || 'Tài khoản Facebook (' + numericMatch + ')',
+                uid: numericMatch,
+                username: '',
+                avatarUrl,
+                verified: true,
+              }
+              setVerifiedResult(res)
+              setNewCollabUid(numericMatch)
+              setIsVerifying(false)
+              toast.success(`Facebook UID ${numericMatch} hợp lệ!`)
+              return
+            }
+          } catch {}
+        }
+
+        setIsVerifying(false)
+        toast.info('Chưa nhận được phản hồi từ Extension. Hãy đảm bảo bạn đã bấm Tải lại Extension tại chrome://extensions.')
+      }
+    }, 4500)
+  }
+
+  const handleAddCollaborator = () => {
+    const name = newCollabName.trim()
+    const rawUid = newCollabUid.trim()
+    const username = newCollabUsername.trim().replace(/^@/, '')
+
+    if (!name) {
+      toast.error('Vui lòng nhập tên hiển thị Facebook của cộng sự')
+      return
+    }
+    if (!rawUid) {
+      toast.error('Vui lòng nhập Facebook UID (dãy số định danh)')
+      return
+    }
+    if (!/^\d{6,}$/.test(rawUid)) {
+      toast.error('Facebook UID phải là dãy chữ số (tối thiểu 6 số, VD: 100005432167890)')
+      return
+    }
+
+    if (collaborators.some((c) => c.fb_uid === rawUid)) {
+      toast.error('Cộng sự với UID này đã tồn tại trong danh sách')
+      return
+    }
+
+    if (collaborators.length >= 3) {
+      toast.error('Hệ thống khuyến nghị tối đa 2-3 cộng sự cố định để tránh bị Facebook hạn chế tính năng')
+      return
+    }
+
+    const newCollab: TaggedCollaborator = {
+      id: 'collab_' + Date.now(),
+      name,
+      fb_uid: rawUid,
+      username: username || undefined,
+      avatar_url: verifiedResult?.avatarUrl || undefined,
+      verified: !!verifiedResult?.verified,
+      active: true,
+    }
+
+    const updated = [...collaborators, newCollab]
+    handleSaveCollaborators(updated)
+    setNewCollabName('')
+    setNewCollabUid('')
+    setNewCollabUsername('')
+    setVerifyInput('')
+    setVerifiedResult(null)
+    setIsAddingCollab(false)
+  }
+
+  const handleRemoveCollaborator = (id: string) => {
+    const updated = collaborators.filter((c) => c.id !== id)
+    handleSaveCollaborators(updated)
+  }
+
+  const handleToggleCollaborator = (id: string) => {
+    const updated = collaborators.map((c) =>
+      c.id === id ? { ...c, active: !c.active } : c
+    )
+    handleSaveCollaborators(updated)
   }
 
   const handleSavePrompt = async () => {
@@ -315,6 +546,303 @@ export function SettingsPage() {
           <Button onClick={handleSaveAgent} disabled={updateSettings.isPending}>
             {updateSettings.isPending ? 'Đang lưu...' : 'Lưu thông tin'}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* ===== 3. TAGGED COLLABORATORS ===== */}
+      <Card className="border-blue-200/80 shadow-sm">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
+                <UserCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base text-slate-900">
+                  Cộng sự gắn thẻ (Tag People trên Facebook)
+                </CardTitle>
+                <CardDescription>
+                  Cấu hình 1–2 tài khoản Facebook cộng sự cố định để tự động gắn thẻ vào bài đăng ("cùng với...")
+                </CardDescription>
+              </div>
+            </div>
+            <Badge variant={collaborators.some((c) => c.active) ? 'success' : 'secondary'} className="text-xs">
+              {collaborators.filter((c) => c.active).length} đang bật gắn thẻ
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Info callout */}
+          <div className="flex items-start gap-2.5 bg-blue-50/70 border border-blue-100 rounded-lg p-3 text-xs text-blue-900 leading-relaxed">
+            <ShieldCheck className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-blue-950">Nhận diện chuẩn xác 100% bằng Facebook UID</p>
+              <p className="text-blue-800/90 mt-0.5">
+                Extension sử dụng dãy số <strong>Facebook UID</strong> bất biến để tìm và so khớp chính xác đối tượng trong hộp thoại <em>"Gắn thẻ người khác"</em>. Dù có nhiều người trùng cả Họ và Tên trong danh sách bạn bè, hệ thống vẫn chọn đúng người cần tag.
+              </p>
+            </div>
+          </div>
+
+          {/* Collaborator List */}
+          <div className="space-y-2.5">
+            {collaborators.length === 0 ? (
+              <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+                <UserCheck className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-60" />
+                <p className="text-sm font-medium text-slate-600">Chưa cấu hình cộng sự nào</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Thêm 1–2 nick Facebook bạn bè thường xuyên cùng bán BĐS để tự động gắn thẻ khi đăng bài
+                </p>
+              </div>
+            ) : (
+              collaborators.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors shadow-2xs"
+                >
+                  <div className="flex items-center gap-3">
+                    {c.avatar_url ? (
+                      <img
+                        src={c.avatar_url}
+                        alt=""
+                        className="w-10 h-10 rounded-full object-cover border border-slate-200 shadow-2xs"
+                        onError={(e) => { (e.target as HTMLElement).style.display = 'none' }}
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-semibold text-sm">
+                        {c.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm text-slate-900">{c.name}</span>
+                        {c.verified && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Đã xác thực
+                          </span>
+                        )}
+                        {c.username && (
+                          <span className="text-xs text-slate-500 font-mono">@{c.username}</span>
+                        )}
+                        <span className={cn(
+                          'inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-mono font-medium',
+                          c.active ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-slate-100 text-slate-500'
+                        )}>
+                          UID: {c.fb_uid}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Trạng thái: {c.active ? (
+                          <span className="text-emerald-600 font-medium">Sẵn sàng gắn thẻ tự động</span>
+                        ) : (
+                          <span className="text-slate-400">Tạm tắt gắn thẻ</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {/* Toggle active switch */}
+                    <button
+                      type="button"
+                      title={c.active ? 'Tắt gắn thẻ người này' : 'Bật gắn thẻ người này'}
+                      onClick={() => handleToggleCollaborator(c.id)}
+                      className={cn(
+                        'relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer',
+                        c.active ? 'bg-blue-600' : 'bg-slate-300'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow',
+                          c.active ? 'translate-x-4.5' : 'translate-x-0.5'
+                        )}
+                      />
+                    </button>
+
+                    {/* Delete button */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveCollaborator(c.id)}
+                      className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 h-8 w-8"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Add collaborator form / trigger */}
+          {isAddingCollab ? (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-blue-600" /> Thêm & Kiểm tra tài khoản Facebook
+                </span>
+                <a
+                  href="https://lookup-id.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3 h-3" /> Tra cứu nhanh UID bằng link
+                </a>
+              </div>
+
+              {/* Step 1: Verification Input Bar */}
+              <div className="space-y-1.5 bg-white p-3.5 rounded-lg border border-slate-200/80">
+                <Label className="text-xs font-semibold text-slate-800">
+                  Bước 1: Nhập link Facebook hoặc UID để kiểm tra tính tồn tại:
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={verifyInput}
+                    onChange={(e) => setVerifyInput(e.target.value)}
+                    placeholder="Dán link FB (VD: https://facebook.com/minh.bds) hoặc UID (100005432167890)..."
+                    className="text-sm bg-slate-50 flex-1 font-mono"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleVerifyProfile()
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleVerifyProfile}
+                    disabled={isVerifying}
+                    className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer px-4 flex-shrink-0"
+                  >
+                    {isVerifying ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Đang kiểm tra...
+                      </>
+                    ) : (
+                      <>
+                        <Search className="w-4 h-4 mr-1.5" /> Kiểm tra tài khoản
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Hệ thống sẽ kết nối với Facebook để kiểm tra xem tài khoản này có tồn tại không và tự động lấy đúng UID chuẩn.
+                </p>
+              </div>
+
+              {/* Verified Preview Card */}
+              {verifiedResult && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3 animate-in fade-in">
+                  {verifiedResult.avatarUrl ? (
+                    <img
+                      src={verifiedResult.avatarUrl}
+                      alt=""
+                      className="w-12 h-12 rounded-full object-cover border border-emerald-300 shadow-2xs"
+                      onError={(e) => { (e.target as HTMLElement).style.display = 'none' }}
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-emerald-200 text-emerald-800 font-bold flex items-center justify-center text-sm">
+                      {verifiedResult.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-900 text-sm">{verifiedResult.name}</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Tài khoản hợp lệ & đang tồn tại
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 font-mono mt-0.5">
+                      Facebook UID chuẩn: <strong>{verifiedResult.uid}</strong>{' '}
+                      {verifiedResult.username && `(@${verifiedResult.username})`}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Auto-filled / Editable Form */}
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs font-semibold text-slate-800">
+                  Bước 2: Xác nhận thông tin lưu trữ:
+                </Label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <Label className="text-[11px] text-slate-600">Tên hiển thị Facebook <span className="text-red-500">*</span></Label>
+                    <Input
+                      value={newCollabName}
+                      onChange={(e) => setNewCollabName(e.target.value)}
+                      placeholder="VD: Nguyễn Đức Minh"
+                      className="mt-1 text-sm bg-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px] text-slate-600">Facebook UID (dãy số) <span className="text-red-500">*</span></Label>
+                    <Input
+                      value={newCollabUid}
+                      onChange={(e) => setNewCollabUid(e.target.value)}
+                      placeholder="VD: 100005432167890"
+                      className="mt-1 text-sm font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px] text-slate-600">Username / Biệt danh <span className="text-slate-400 font-normal">(tùy chọn)</span></Label>
+                    <Input
+                      value={newCollabUsername}
+                      onChange={(e) => setNewCollabUsername(e.target.value)}
+                      placeholder="VD: minh.bds"
+                      className="mt-1 text-sm font-mono bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-200">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsAddingCollab(false)
+                    setNewCollabName('')
+                    setNewCollabUid('')
+                    setNewCollabUsername('')
+                    setVerifyInput('')
+                    setVerifiedResult(null)
+                  }}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleAddCollaborator}
+                  className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                >
+                  Lưu cộng sự vào danh sách
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              {collaborators.length < 3 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsAddingCollab(true)}
+                  className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Thêm cộng sự gắn thẻ
+                </Button>
+              ) : (
+                <p className="text-xs text-slate-500 italic">
+                  Đã đạt giới hạn tối đa 3 cộng sự gắn thẻ cố định (để đảm bảo tuân thủ chính sách Meta chống spam).
+                </p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -14,6 +14,7 @@ import {
   Building2,
   Check,
   Trash2,
+  UserCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { addDays, format } from 'date-fns'
@@ -468,7 +469,20 @@ export function PostGenerator() {
         }
       }
 
-      // 3. Create schedules
+      // 3. Lấy danh sách cộng sự đang bật gắn thẻ
+      let activeCollaborators: any[] = []
+      if (settings?.tagged_collaborators && Array.isArray(settings.tagged_collaborators)) {
+        activeCollaborators = settings.tagged_collaborators.filter((c: any) => c && c.active !== false && c.fb_uid)
+      } else {
+        try {
+          const localCollabs = localStorage.getItem('REALPOST_TAGGED_COLLABORATORS')
+          if (localCollabs) {
+            activeCollaborators = JSON.parse(localCollabs).filter((c: any) => c && c.active !== false && c.fb_uid)
+          }
+        } catch {}
+      }
+
+      // 4. Create schedules
       const schedules = approvedCards.map((card, i) => ({
         user_id: user.id,
         post_id: postIds[i],
@@ -476,6 +490,7 @@ export function PostGenerator() {
         target_group_url: card.groupUrl,
         scheduled_at: card.scheduledAt,
         status: 'pending' as const,
+        tagged_collaborators: activeCollaborators.length > 0 ? activeCollaborators : null,
       }))
 
       await batchCreateSchedules.mutateAsync(schedules)
@@ -1238,19 +1253,36 @@ export function PostGenerator() {
 
           {/* Sticky Bottom Action Bar */}
           {variantCards.length > 0 && (
-            <div className="sticky bottom-4 z-20 bg-white/95 backdrop-blur-md shadow-lg border border-slate-200 rounded-xl p-3 flex gap-3 mt-4">
-              <Button type="button" variant="outline" className="flex-1" onClick={() => setVariantCards([])}>
-                Hủy bỏ
-              </Button>
-              <Button
-                type="button"
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                onClick={confirmAndSchedule}
-                disabled={batchCreateSchedules.isPending}
-              >
-                <CheckSquare className="w-4 h-4 mr-1" />
-                {batchCreateSchedules.isPending ? 'Đang lưu...' : `Xác nhận & Nạp vào lịch (${variantCards.length} bài)`}
-              </Button>
+            <div className="sticky bottom-4 z-20 bg-white/95 backdrop-blur-md shadow-lg border border-slate-200 rounded-xl p-3 flex flex-col gap-2.5 mt-4">
+              {settings?.tagged_collaborators?.some((c) => c.active) && (
+                <div className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50/80 px-2.5 py-1.5 rounded-lg border border-blue-100">
+                  <UserCheck className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                  <span>
+                    Tự động gắn thẻ cộng sự Facebook:{' '}
+                    <strong>
+                      {settings.tagged_collaborators
+                        .filter((c) => c.active)
+                        .map((c) => c.name)
+                        .join(', ')}
+                    </strong>{' '}
+                    (đã lưu trong Cài đặt)
+                  </span>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setVariantCards([])}>
+                  Hủy bỏ
+                </Button>
+                <Button
+                  type="button"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                  onClick={confirmAndSchedule}
+                  disabled={batchCreateSchedules.isPending}
+                >
+                  <CheckSquare className="w-4 h-4 mr-1" />
+                  {batchCreateSchedules.isPending ? 'Đang lưu...' : `Xác nhận & Nạp vào lịch (${variantCards.length} bài)`}
+                </Button>
+              </div>
             </div>
           )}
         </div>

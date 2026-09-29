@@ -46,12 +46,19 @@ export function useExtensionBridge() {
       try {
         const { data: { session } } = await supabase.auth.getSession()
         if (session?.access_token) {
+          let taggedCollaborators = []
+          try {
+            const rawCollabs = localStorage.getItem('REALPOST_TAGGED_COLLABORATORS')
+            if (rawCollabs) taggedCollaborators = JSON.parse(rawCollabs)
+          } catch {}
+
           window.postMessage({
             type: 'REALPOST_CONFIG',
             supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
             supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
             accessToken: session.access_token,
             refreshToken: session.refresh_token,
+            taggedCollaborators,
           }, '*')
         }
       } catch { /* ignore */ }

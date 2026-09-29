@@ -84,6 +84,7 @@ export interface Database {
           scheduled_at: string
           status: 'pending' | 'posting' | 'success' | 'failed'
           error_log: string | null
+          tagged_collaborators?: TaggedCollaborator[] | null
           created_at: string
         }
         Insert: {
@@ -95,11 +96,13 @@ export interface Database {
           scheduled_at: string
           status?: 'pending' | 'posting' | 'success' | 'failed'
           error_log?: string | null
+          tagged_collaborators?: TaggedCollaborator[] | null
           created_at?: string
         }
         Update: {
           status?: 'pending' | 'posting' | 'success' | 'failed'
           error_log?: string | null
+          tagged_collaborators?: TaggedCollaborator[] | null
         }
       }
       posting_logs: {
@@ -137,6 +140,7 @@ export interface Database {
           agent_phone_2: string | null
           extension_visible_mode: boolean
           custom_system_prompt: string | null
+          tagged_collaborators: TaggedCollaborator[] | null
           updated_at: string
         }
         Insert: {
@@ -150,6 +154,7 @@ export interface Database {
           agent_phone_2?: string | null
           extension_visible_mode?: boolean
           custom_system_prompt?: string | null
+          tagged_collaborators?: TaggedCollaborator[] | null
           updated_at?: string
         }
         Update: {
@@ -162,6 +167,7 @@ export interface Database {
           agent_phone_2?: string | null
           extension_visible_mode?: boolean
           custom_system_prompt?: string | null
+          tagged_collaborators?: TaggedCollaborator[] | null
           updated_at?: string
         }
       }
@@ -170,6 +176,16 @@ export interface Database {
     Functions: {}
     Enums: {}
   }
+}
+
+export interface TaggedCollaborator {
+  id: string
+  name: string
+  fb_uid: string
+  username?: string
+  avatar_url?: string
+  verified?: boolean
+  active: boolean
 }
 
 // Convenience types

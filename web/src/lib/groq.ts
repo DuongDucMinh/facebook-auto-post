@@ -1,4 +1,4 @@
-// Groq API Client for RealPost AI
+﻿// Groq API Client for RealPost AI
 // Primary Model: openai/gpt-oss-120b
 // Fallback Models: openai/gpt-oss-20b, openai/gpt-oss-safeguard-20b, qwen/qwen3.8-27b
 // Rate Limits:
@@ -50,7 +50,7 @@ Ví dụ minh họa biến tấu cho cùng một căn nhà:
 
 3. ĐỊNH DẠNG TƯƠNG THÍCH THANH CÔNG CỤ FACEBOOK (HEADER, IN ĐẬM [B], IN NGHIÊNG [I], GẠCH ĐẦU DÒNG):
 Hệ thống sử dụng thanh công cụ định dạng trực tiếp của Facebook Group (Header H1, In đậm B, In nghiêng I, Bullet list). BẮT BUỘC sử dụng cú pháp Markdown chuẩn để tự động kích hoạt các kiểu hiển thị này:
-- TIÊU ĐỀ: Bắt buộc VIẾT HOA toàn bộ, nằm riêng ở trường "title", đầy đủ thông tin (loại hình, khu vực, điểm mạnh, giá mờ). Hệ thống sẽ tự động biến tiêu đề thành Header lớn (H1) nổi bật trên Facebook.
+- TIÊU ĐỀ: Bắt buộc VIẾT HOA toàn bộ, nằm riêng ở trường "title", đầy đủ thông tin (loại hình, khu vực, điểm mạnh, giá mờ). BẮT BUỘC giữ nguyên DẤU THANH TIẾNG VIỆT chính xác khi viết hoa (VD đúng: BÁN NHÀ, NGÕ THÔNG, Ô TÔ ĐỖ CỬA — VD sai: BAN NHA, NGO THONG, O TO DO CUA). TUYỆT ĐỐI KHÔNG viết thiếu dấu hoặc sai chính tả Tiếng Việt. Hệ thống sẽ tự động biến tiêu đề thành Header lớn (H1) nổi bật trên Facebook.
 - ĐỀ MỤC CÁC PHẦN: BẮT BUỘC in đậm bằng cặp dấu sao kép: **Thông tin lô đất:** (hoặc **Thông tin căn nhà:**), **2 hướng khai thác:**, **Ưu thế nổi bật:**.
 - TỪ KHÓA & THÔNG SỐ CỐT LÕI: BẮT BUỘC in đậm **...** để nổi bật đập vào mắt người xem:
   + Vị trí đắc địa: **Thôn Kim Ngưu, Văn Giang**, **Đại học Bách Khoa Cơ sở 2**...
@@ -251,7 +251,7 @@ ${contactText}
 
 ### YÊU CẦU CHO TỪNG BÀI VIẾT TRONG BATCH NÀY:
 ${styleRequirements}
-   - Tiêu đề: ĐẦY ĐỦ THÔNG TIN (loại hình, khu vực, điểm mạnh, giá mờ) nhưng BIẾN TẤU từ ngữ khác nhau.
+   - Tiêu đề: ĐẦY ĐỦ THÔNG TIN (loại hình, khu vực, điểm mạnh, giá mờ) nhưng BIẾN TẤU từ ngữ khác nhau. BẮT BUỘC giữ nguyên DẤU THANH TIẾNG VIỆT chính xác khi viết hoa (VD: BÁN, NHÀ, ĐẤT, THÔNG, ÔTÔ, TẦNG, TIỆN ÍCH... — TUYỆT ĐỐI KHÔNG viết thiếu dấu hoặc sai chính tả Tiếng Việt).
    - Thân bài: Chia nhiều đoạn ngắn cách nhau bằng \\n\\n, có in đậm **đề mục**, in đậm **thông số/từ khóa**, có gạch đầu dòng (-), in nghiêng *câu đúc kết*.
    - Tuyệt đối KHÔNG có icon/emoji.
    - Cuối bài gắn chính xác khối thông tin liên hệ như trên.
